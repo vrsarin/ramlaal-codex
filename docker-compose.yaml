@@ -22,10 +22,18 @@ services:
       - 127.0.0.1:4318:4318
     volumes:
       - ./.data/otel:/data
+    healthcheck:
+      test: [CMD-SHELL, "curl -fs http://localhost:3000/api/health || wget -qO- http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
+  # Optional: only started with COMPOSE_PROFILES=ollama (see makefile OLLAMA=docker). By default the host's Ollama is used.
   ollama:
     container_name: ollama
     image: ollama/ollama:latest
+    profiles: [ollama]
     environment:
       OLLAMA_CONTEXT_LENGTH: '16384'
     volumes:
@@ -48,17 +56,25 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:example@pgvector:5432/litellm
       STORE_MODEL_IN_DB: 'True'
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       <<: *otel
       OTEL_SERVICE_NAME: litellm
       OTEL_EXPORTER: otlp_http
       OTEL_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel:4318}/v1/traces
     # volumes:
     #   - credentials:/run/secrets:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request as u; u.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
     depends_on:
       codex-config:
         condition: service_completed_successfully
       ollama:
         condition: service_healthy
+        required: false
       pgvector:
         condition: service_healthy
 
@@ -69,15 +85,21 @@ services:
       PGHOST: pgvector
       PGPASSWORD: example
       PGDATABASE: ramlaal
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       EMBED_MODEL: embeddinggemma
       <<: [*auth, *otel]
       OTEL_SERVICE_NAME: memory
     ports:
       - 127.0.0.1:8080:8080
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       ollama:
         condition: service_healthy
+        required: false
       pgvector:
         condition: service_healthy
 
@@ -108,9 +130,14 @@ services:
     volumes:
       - ./.data/codex-home-docker:/codex-home
       - ./.data/workspaces:/workspaces
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:8090/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       litellm:
-        condition: service_started
+        condition: service_healthy
       codex-config:
         condition: service_completed_successfully
 
@@ -143,11 +170,20 @@ services:
       - ./.data/workspaces:/workspaces
     ports:
       - 127.0.0.1:8000:8000
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
-      - gateway
-      - memory
-      - nats
-      - keycloak
+      gateway:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
 
   # Identity provider with a static, version-controlled realm (users: dev/dev; clients: ramlaal-ui, ramlaal-swarm).
   keycloak:
@@ -160,24 +196,50 @@ services:
       KC_HOSTNAME: http://localhost:8180
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
       KC_HTTP_ENABLED: 'true'
+      KC_HEALTH_ENABLED: 'true'
     volumes:
       - ./deploy/local/keycloak:/opt/keycloak/data/import:ro
     ports:
       - 127.0.0.1:8180:8080
+    healthcheck:
+      # no curl in the image: speak HTTP over bash /dev/tcp to the management port
+      test:
+        - CMD-SHELL
+        - |
+          exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '"status": "UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   nats:
     container_name: nats
     image: nats:2-alpine
+    command: [-m, '8222']
     restart: unless-stopped
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   ui:
     container_name: ui
     build: src/ui
     ports:
       - 127.0.0.1:8081:80
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
-      - orchestrator
-      - memory
+      orchestrator:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
 
   pgvector:
     container_name: pgvector
