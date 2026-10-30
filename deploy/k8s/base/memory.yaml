@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: memory}
+  template:
+    metadata:
+      labels: {app: memory}
+    spec:
+      containers:
+        - name: memory
+          image: ramlaal/memory
+          ports:
+            - {name: http, containerPort: 8080}
+          envFrom:
+            - configMapRef: {name: ramlaal-common}
+          env:
+            - {name: PGHOST, value: postgres}
+            - {name: PGDATABASE, value: ramlaal}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: POSTGRES_PASSWORD}}
+            - {name: EMBED_MODEL, value: embeddinggemma}
+            - {name: OTEL_SERVICE_NAME, value: memory}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memory
+spec:
+  selector: {app: memory}
+  ports:
+    - {name: http, port: 8080}

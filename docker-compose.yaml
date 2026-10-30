@@ -144,7 +144,7 @@ services:
   orchestrator:
     container_name: orchestrator
     build: src/orchestrator
-    environment:
+    environment: &orchestrator-env
       GATEWAY_URL: http://gateway:8090
       MEMORY_URL: http://memory:8080
       RAMLAAL_INSTANCE: ${RAMLAAL_INSTANCE:-ramlaal-1}
@@ -184,6 +184,81 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+
+  # Swarm peers: same image and config as orchestrator with their own identity. The orchestrator delegates
+  # to them by capability over NATS. Not published on the host; only the orchestrator is reachable on :8000.
+  coding-agent:
+    container_name: coding-agent
+    build: src/orchestrator
+    environment:
+      <<: *orchestrator-env
+      RAMLAAL_INSTANCE: coding-agent
+      RAMLAAL_PURPOSE: software engineering - writes, edits, tests and reviews code in the shared workspaces
+      RAMLAAL_CAPABILITIES: code
+      OTEL_SERVICE_INSTANCE_ID: coding-agent
+    volumes:
+      - ./.data/workspaces:/workspaces
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      gateway:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  home-agent:
+    container_name: home-agent
+    build: src/orchestrator
+    environment:
+      <<: *orchestrator-env
+      RAMLAAL_INSTANCE: home-agent
+      RAMLAAL_PURPOSE: home automation - plans and manages household devices and routines
+      RAMLAAL_CAPABILITIES: home
+      OTEL_SERVICE_INSTANCE_ID: home-agent
+      # Home Assistant REST API. HA_TOKEN comes from the shell or .env, never from this file.
+      HA_URL: ${HA_URL:-http://homeassistant:8123}
+      HA_TOKEN: ${HA_TOKEN:-}
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      gateway:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  # Home Assistant UI at http://localhost:8123. First run: finish onboarding, then create a long-lived token
+  # (Profile -> Security) and put it in .env as HA_TOKEN. Bridge networking: LAN device discovery (mDNS/SSDP) is
+  # limited on Docker Desktop for Mac, so add devices by IP or integrations that don't need discovery.
+  homeassistant:
+    container_name: homeassistant
+    image: ghcr.io/home-assistant/home-assistant:stable
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - ./.data/homeassistant:/config
+    ports:
+      - 127.0.0.1:8123:8123
+    healthcheck:
+      test: [CMD, curl, -fs, "http://localhost:8123/manifest.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   # Identity provider with a static, version-controlled realm (users: dev/dev; clients: ramlaal-ui, ramlaal-swarm).
   keycloak:

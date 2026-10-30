@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ramlaal
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - nats.yaml
+  - keycloak.yaml
+  - litellm.yaml
+  - memory.yaml
+  - gateway.yaml
+  - agents.yaml
+  - ui.yaml
+  - workspaces.yaml
+
+# Image names are placeholders that skaffold (local) or the overlay's images: block (production) resolves.
+images:
+  - name: ramlaal/postgres
+  - name: ramlaal/litellm
+  - name: ramlaal/memory
+  - name: ramlaal/gateway
+  - name: ramlaal/orchestrator
+  - name: ramlaal/ui
+
+# Secrets are never committed: overlays generate dev values locally, production supplies the same names
+# (ramlaal-secrets, ramlaal-home-assistant) from its secret manager.
+configMapGenerator:
+  - name: ramlaal-common
+    literals:
+      - AUTH_ISSUER=http://localhost:8180/realms/ramlaal
+      - AUTH_DISCOVERY_URL=http://keycloak:8080/realms/ramlaal
+      - AUTH_AUDIENCE=ramlaal
+      - KEYCLOAK_PUBLIC_URL=http://localhost:8180
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_ENDPOINT=http://otel:4318/v1/traces
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=base
+      - OLLAMA_BASE_URL=http://ollama:11434
+  - name: ramlaal-agent
+    literals:
+      - GATEWAY_URL=http://gateway:8090
+      - MEMORY_URL=http://memory:8080
+      - NATS_URL=nats://nats:4222
+      - SWARM_CLIENT_ID=ramlaal-swarm
+      - DECIDER=rules
+      - LLM_BASE_URL=http://litellm:4000/v1
+      - DECIDER_MODEL=codex-local
+      - HA_URL=http://homeassistant:8123
+  - name: codex-config
+    files:
+      - config.toml=config/codex-config.toml
+    options:
+      disableNameSuffixHash: true
+  - name: keycloak-realm
+    files:
+      - config/ramlaal-realm.json
+    options:
+      disableNameSuffixHash: true
+  - name: postgres-init
+    files:
+      - config/01-databases.sql
+      - config/02-age.sql
+    options:
+      disableNameSuffixHash: true

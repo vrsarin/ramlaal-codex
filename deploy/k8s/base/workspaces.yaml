@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspaces
+spec:
+  # Shared by the gateway and the agents that edit code. ReadWriteOnce only works while those pods share a node;
+  # use a ReadWriteMany storage class (NFS, CephFS, EFS) in a multi-node cluster.
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 10Gi}

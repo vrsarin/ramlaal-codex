@@ -1,0 +1,68 @@
+apiVersion: skaffold/v4beta14
+kind: Config
+metadata:
+  name: ramlaal
+
+# Rancher Desktop (containerd): nerdctl builds straight into the cluster's k8s.io namespace, so nothing is pushed.
+# Usage: `skaffold dev` (watch + port-forward) or `skaffold run` (one-shot), against the rancher-desktop context.
+build:
+  local:
+    push: false
+  tagPolicy:
+    inputDigest: {}
+  artifacts:
+    - image: ramlaal/postgres
+      context: deploy/local/postgres
+      custom:
+        buildCommand: ../../k8s/hack/nerdctl-build.sh Dockerfile
+        dependencies:
+          paths: ["Dockerfile", "init/**"]
+    - image: ramlaal/litellm
+      context: deploy/local/litellm
+      custom:
+        buildCommand: ../../k8s/hack/nerdctl-build.sh dockerfile
+        dependencies:
+          paths: ["dockerfile", "litellm.yaml", "start-litellm.sh"]
+    - image: ramlaal/memory
+      context: src/memory
+      custom:
+        buildCommand: ../../deploy/k8s/hack/nerdctl-build.sh Dockerfile
+        dependencies:
+          paths: ["**/*.go", "go.mod", "go.sum", "Dockerfile"]
+    - image: ramlaal/orchestrator
+      context: src/orchestrator
+      custom:
+        buildCommand: ../../deploy/k8s/hack/nerdctl-build.sh Dockerfile
+        dependencies:
+          paths: ["**/*.go", "go.mod", "go.sum", "Dockerfile"]
+    - image: ramlaal/gateway
+      context: src/gateway
+      custom:
+        buildCommand: ../../deploy/k8s/hack/nerdctl-build.sh Dockerfile
+        dependencies:
+          paths: ["src/**", "package.json", "package-lock.json", "Dockerfile"]
+    - image: ramlaal/ui
+      context: src/ui
+      custom:
+        buildCommand: ../../deploy/k8s/hack/nerdctl-build.sh Dockerfile
+        dependencies:
+          paths: ["src/**", "index.html", "nginx.conf", "package.json", "package-lock.json", "vite.config.ts", "tsconfig.json", "Dockerfile"]
+
+manifests:
+  kustomize:
+    paths:
+      - deploy/k8s/overlays/local
+
+deploy:
+  kubectl: {}
+  statusCheckDeadlineSeconds: 600
+
+# The UI, Keycloak and the API must stay on these localhost ports: the Keycloak issuer and the realm's redirect
+# URIs are written for them.
+portForward:
+  - {resourceType: service, resourceName: ui, namespace: ramlaal, port: 80, localPort: 8081}
+  - {resourceType: service, resourceName: keycloak, namespace: ramlaal, port: 8080, localPort: 8180}
+  - {resourceType: service, resourceName: orchestrator, namespace: ramlaal, port: 8000, localPort: 8000}
+  - {resourceType: service, resourceName: litellm, namespace: ramlaal, port: 4000, localPort: 4000}
+  - {resourceType: service, resourceName: homeassistant, namespace: ramlaal, port: 8123, localPort: 8123}
+  - {resourceType: service, resourceName: otel, namespace: ramlaal, port: 3000, localPort: 3000}
