@@ -1,0 +1,91 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Orchestrator",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/src/orchestrator/cmd/orchestrator",
+      "cwd": "${workspaceFolder}/src/orchestrator",
+      "env": {
+        "PORT": "8000",
+        "SWARM_LISTEN": ":19000",
+        "AUTH_ISSUER": "http://localhost:8180/realms/ramlaal",
+        "AUTH_AUDIENCE": "ramlaal",
+        "SWARM_CLIENT_ID": "ramlaal-swarm",
+        "SWARM_CLIENT_SECRET": "dev-swarm-secret",
+        "DEFAULT_WORKSPACE": "${workspaceFolder}",
+        "GATEWAY_URL": "http://127.0.0.1:8090",
+        "MEMORY_URL": "http://127.0.0.1:8080"
+      }
+    },
+    {
+      "name": "Gateway (Codex app-server)",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "src/server.ts"
+      ],
+      "cwd": "${workspaceFolder}/src/gateway",
+      "env": {
+        "APPROVAL_MODE": "auto",
+        "AUTH_ISSUER": "http://localhost:8180/realms/ramlaal",
+        "AUTH_AUDIENCE": "ramlaal"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Gateway (Codex via LiteLLM)",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "src/server.ts"
+      ],
+      "cwd": "${workspaceFolder}/src/gateway",
+      "env": {
+        "APPROVAL_MODE": "auto",
+        "AUTH_ISSUER": "http://localhost:8180/realms/ramlaal",
+        "AUTH_AUDIENCE": "ramlaal",
+        "CODEX_HOME": "${workspaceFolder}/.data/codex-home"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Chat",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}/src/ui"
+    },
+    {
+      "name": "Open UI in browser",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://127.0.0.1:5173"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full local stack (LiteLLM)",
+      "configurations": [
+        "Gateway (Codex via LiteLLM)",
+        "Orchestrator",
+        "Chat"
+      ],
+      "preLaunchTask": "Docker: memory + LiteLLM stack",
+      "stopAll": true
+    },
+    {
+      "name": "Full local stack",
+      "configurations": [
+        "Gateway (Codex app-server)",
+        "Orchestrator",
+        "Chat"
+      ],
+      "preLaunchTask": "Docker: memory stack",
+      "stopAll": true
+    }
+  ]
+}

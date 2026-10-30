@@ -1,0 +1,25 @@
+{
+  "name": "ramlaal-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "test": "node --test \"test/*.test.mjs\"",
+    "gen-types": "codex app-server generate-ts --out src/protocol"
+  },
+  "dependencies": {
+    "@openai/codex": "^0.165.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api-logs": "^0.223.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.223.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.223.0",
+    "@opentelemetry/resources": "^2.12.0",
+    "@opentelemetry/sdk-logs": "^0.223.0",
+    "@opentelemetry/sdk-trace-node": "^2.12.0",
+    "jose": "^6.2.14"
+  }
+}

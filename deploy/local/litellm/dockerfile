@@ -1,0 +1,5 @@
+FROM ghcr.io/berriai/litellm:main-stable
+WORKDIR /app
+COPY ./litellm.yaml ./config.yaml
+COPY ./start-litellm.sh ./start-litellm.sh
+ENTRYPOINT ["/bin/sh", "./start-litellm.sh"]

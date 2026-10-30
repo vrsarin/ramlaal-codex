@@ -426,3 +426,24 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+.data/
+docs/
+# Ramlaal build/runtime artifacts
+node_modules/
+.venv/
+.mem0/
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+ledger.sqlite*
+src/gateway/src/protocol/
+.data/
+
+
+.pytest_tmp/
+**/*.sqllite
+**/*.sqlite-shm
+**/*.sqlite-wal
+
+*.exe

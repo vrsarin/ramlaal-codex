@@ -1,0 +1,21 @@
+model = "codex-local"
+model_provider = "litellm"
+model_context_window = 65536
+
+[model_providers.litellm]
+name = "Ramlaal local LiteLLM"
+base_url = "http://localhost:4000/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+request_max_retries = 1
+stream_max_retries = 1
+stream_idle_timeout_ms = 300000
+
+# Memory is owned by the orchestrator (retrieval + admission), not Codex's own memories.
+[memories]
+generate_memories = false
+use_memories = false
+
+# Worker/reviewer coordination is the orchestrator's job; Codex's own sub-agent tools only confuse small models.
+[features]
+multi_agent = false

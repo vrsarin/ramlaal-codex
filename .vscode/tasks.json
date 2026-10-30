@@ -1,0 +1,60 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Docker: memory stack",
+      "type": "shell",
+      "command": "docker compose up -d --build --wait ollama pgvector keycloak memory",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: memory + LiteLLM stack",
+      "type": "shell",
+      "command": "docker compose up -d --build --wait ollama pgvector keycloak memory litellm",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: pull memory models",
+      "type": "shell",
+      "command": "docker compose exec ollama ollama pull embeddinggemma; docker compose exec ollama ollama pull llama3.2:3b",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Test: gateway",
+      "type": "shell",
+      "command": "npm test",
+      "options": { "cwd": "${workspaceFolder}/src/gateway" },
+      "group": "test"
+    },
+    {
+      "label": "Test: orchestrator",
+      "type": "shell",
+      "command": "go test ./...",
+      "options": { "cwd": "${workspaceFolder}/src/orchestrator" },
+      "group": "test"
+    },
+    {
+      "label": "Test: memory",
+      "type": "shell",
+      "command": "go test ./...",
+      "options": { "cwd": "${workspaceFolder}/src/memory" },
+      "group": "test"
+    },
+    {
+      "label": "Build: ui",
+      "type": "shell",
+      "command": "npm run build",
+      "options": { "cwd": "${workspaceFolder}/src/ui" },
+      "group": "test"
+    },
+    {
+      "label": "Test: all",
+      "dependsOn": ["Test: gateway", "Test: orchestrator", "Test: memory", "Build: ui"],
+      "dependsOrder": "sequence",
+      "group": { "kind": "test", "isDefault": true }
+    }
+  ]
+}

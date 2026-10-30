@@ -1,0 +1,13 @@
+model_list:
+  - model_name: codex-local
+    litellm_params:
+      model: ollama_chat/llama3.2:3b
+      # model: ollama_chat/gpt-oss:20b
+      api_base: http://ollama:11434
+      additional_drop_params: ["reasoning_effort"]
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+litellm_settings:
+  # Codex sends OpenAI-only params (parallel_tool_calls, prompt_cache_key) that Ollama rejects.
+  drop_params: true
+  callbacks: ["otel"]

@@ -1,0 +1,197 @@
+name: ramlaal
+
+# Every component validates Keycloak tokens from this realm. Set AUTH_ISSUER= (empty) to switch authentication off for local experiments.
+x-auth: &auth
+  AUTH_ISSUER: ${AUTH_ISSUER-http://localhost:8180/realms/ramlaal}
+  AUTH_DISCOVERY_URL: http://keycloak:8080/realms/ramlaal
+  AUTH_AUDIENCE: ramlaal
+
+# OTLP export to the single observability backend; point OTEL_EXPORTER_OTLP_ENDPOINT elsewhere (SigNoz, Phoenix, a collector) without touching code.
+x-otel: &otel
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel:4318}
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local
+
+services:
+  # Traces + logs + metrics in one place (Grafana at :3000 -> Explore: Tempo traces link to Loki logs by trace_id).
+  otel:
+    container_name: otel
+    image: grafana/otel-lgtm:latest
+    ports:
+      - 127.0.0.1:${GRAFANA_PORT:-3000}:3000
+      - 127.0.0.1:4318:4318
+    volumes:
+      - ./.data/otel:/data
+
+  ollama:
+    container_name: ollama
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_CONTEXT_LENGTH: '16384'
+    volumes:
+      - ./.data/models:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  litellm:
+    container_name: litellm
+    build:
+      context: deploy/local/litellm
+      dockerfile: dockerfile
+    ports:
+      - 127.0.0.1:${LITELLM_PORT:-4000}:4000
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql://postgres:example@pgvector:5432/litellm
+      STORE_MODEL_IN_DB: 'True'
+      <<: *otel
+      OTEL_SERVICE_NAME: litellm
+      OTEL_EXPORTER: otlp_http
+      OTEL_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel:4318}/v1/traces
+    # volumes:
+    #   - credentials:/run/secrets:ro
+    depends_on:
+      codex-config:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+
+  memory:
+    container_name: memory
+    build: src/memory
+    environment:
+      PGHOST: pgvector
+      PGPASSWORD: example
+      PGDATABASE: ramlaal
+      OLLAMA_BASE_URL: http://ollama:11434
+      EMBED_MODEL: embeddinggemma
+      <<: [*auth, *otel]
+      OTEL_SERVICE_NAME: memory
+    ports:
+      - 127.0.0.1:8080:8080
+    depends_on:
+      ollama:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+
+  # Copies the tracked config into the gitignored Codex homes. Host gateway uses localhost; the containerized one reaches litellm by service name.
+  codex-config:
+    container_name: codex-config
+    image: busybox:latest
+    restart: 'no'
+    volumes:
+      - ./deploy/local/codex:/src:ro
+      - ./.data:/data
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data/codex-home /data/codex-home-docker
+        cp /src/config.toml /data/codex-home/config.toml
+        sed 's#localhost:4000#litellm:4000#' /src/config.toml > /data/codex-home-docker/config.toml
+
+  gateway:
+    container_name: gateway
+    build: src/gateway
+    environment:
+      <<: [*auth, *otel]
+      OTEL_SERVICE_NAME: gateway
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-}
+      APPROVAL_MODE: ${APPROVAL_MODE:-auto}
+    volumes:
+      - ./.data/codex-home-docker:/codex-home
+      - ./.data/workspaces:/workspaces
+    depends_on:
+      litellm:
+        condition: service_started
+      codex-config:
+        condition: service_completed_successfully
+
+  orchestrator:
+    container_name: orchestrator
+    build: src/orchestrator
+    environment:
+      GATEWAY_URL: http://gateway:8090
+      MEMORY_URL: http://memory:8080
+      RAMLAAL_INSTANCE: ${RAMLAAL_INSTANCE:-ramlaal-1}
+      RAMLAAL_PURPOSE: ${RAMLAAL_PURPOSE:-general assistant}
+      RAMLAAL_CAPABILITIES: ${RAMLAAL_CAPABILITIES:-}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      <<: [*auth, *otel]
+      OTEL_SERVICE_NAME: orchestrator
+      OTEL_SERVICE_INSTANCE_ID: ${RAMLAAL_INSTANCE:-ramlaal-1}
+      SWARM_CLIENT_ID: ${SWARM_CLIENT_ID:-ramlaal-swarm}
+      SWARM_CLIENT_SECRET: ${SWARM_CLIENT_SECRET:-dev-swarm-secret}
+      # cost policy: rules (free) | llm (via LiteLLM); leave MODEL_* empty to use the Codex default
+      DECIDER: ${DECIDER:-rules}
+      LLM_BASE_URL: http://litellm:4000/v1
+      LLM_API_KEY: ${LITELLM_MASTER_KEY:-}
+      DECIDER_MODEL: ${DECIDER_MODEL:-codex-local}
+      MODEL_CHEAP: ${MODEL_CHEAP:-}
+      MODEL_STRONG: ${MODEL_STRONG:-}
+      MODEL_REVIEWER: ${MODEL_REVIEWER:-}
+      MODEL_PRICES: ${MODEL_PRICES:-}
+      SKIP_REVIEW_CONFIDENCE: ${SKIP_REVIEW_CONFIDENCE:-}
+    volumes:
+      - ./.data/workspaces:/workspaces
+    ports:
+      - 127.0.0.1:8000:8000
+    depends_on:
+      - gateway
+      - memory
+      - nats
+      - keycloak
+
+  # Identity provider with a static, version-controlled realm (users: dev/dev; clients: ramlaal-ui, ramlaal-swarm).
+  keycloak:
+    container_name: keycloak
+    image: quay.io/keycloak/keycloak:26.0
+    command: [start-dev, --import-realm]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
+      KC_HTTP_ENABLED: 'true'
+    volumes:
+      - ./deploy/local/keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - 127.0.0.1:8180:8080
+
+  nats:
+    container_name: nats
+    image: nats:2-alpine
+    restart: unless-stopped
+
+  ui:
+    container_name: ui
+    build: src/ui
+    ports:
+      - 127.0.0.1:8081:80
+    depends_on:
+      - orchestrator
+      - memory
+
+  pgvector:
+    container_name: pgvector
+    build: ./deploy/local/postgres
+    image: ramlaal-postgres:pg18-age
+    environment:
+      POSTGRES_PASSWORD: example
+    volumes:
+      - ./deploy/local/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - 127.0.0.1:5432:5432
+    healthcheck:
+      test: [CMD, pg_isready, "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
