@@ -1,0 +1,160 @@
+# Orchestrator and the two swarm agents run the same image; identity and capabilities come from env.
+# Peers dial each other over gRPC at the address announced on NATS, so each pod advertises its own IP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: orchestrator}
+  template:
+    metadata:
+      labels: {app: orchestrator, ramlaal/swarm: member}
+    spec:
+      containers:
+        - name: orchestrator
+          image: ramlaal/orchestrator
+          ports:
+            - {name: http, containerPort: 8000}
+            - {name: a2a, containerPort: 9000}
+          envFrom:
+            - configMapRef: {name: ramlaal-common}
+            - configMapRef: {name: ramlaal-agent}
+          env:
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - {name: SWARM_ADVERTISE, value: "$(POD_IP):9000"}
+            - {name: RAMLAAL_INSTANCE, value: ramlaal-1}
+            - {name: RAMLAAL_PURPOSE, value: general assistant}
+            - {name: RAMLAAL_CAPABILITIES, value: ""}
+            - {name: OTEL_SERVICE_NAME, value: orchestrator}
+            - {name: OTEL_SERVICE_INSTANCE_ID, value: ramlaal-1}
+            - name: SWARM_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: SWARM_CLIENT_SECRET}}
+            - name: LLM_API_KEY
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: LITELLM_MASTER_KEY}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: workspaces, mountPath: /workspaces}
+      volumes:
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: workspaces
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+spec:
+  selector: {app: orchestrator}
+  ports:
+    - {name: http, port: 8000}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coding-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: coding-agent}
+  template:
+    metadata:
+      labels: {app: coding-agent, ramlaal/swarm: member}
+    spec:
+      containers:
+        - name: coding-agent
+          image: ramlaal/orchestrator
+          ports:
+            - {name: http, containerPort: 8000}
+            - {name: a2a, containerPort: 9000}
+          envFrom:
+            - configMapRef: {name: ramlaal-common}
+            - configMapRef: {name: ramlaal-agent}
+          env:
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - {name: SWARM_ADVERTISE, value: "$(POD_IP):9000"}
+            - {name: RAMLAAL_INSTANCE, value: coding-agent}
+            - {name: RAMLAAL_PURPOSE, value: "software engineering - writes, edits, tests and reviews code in the shared workspaces"}
+            - {name: RAMLAAL_CAPABILITIES, value: code}
+            - {name: OTEL_SERVICE_NAME, value: orchestrator}
+            - {name: OTEL_SERVICE_INSTANCE_ID, value: coding-agent}
+            - name: SWARM_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: SWARM_CLIENT_SECRET}}
+            - name: LLM_API_KEY
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: LITELLM_MASTER_KEY}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: workspaces, mountPath: /workspaces}
+      volumes:
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: workspaces
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: home-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: home-agent}
+  template:
+    metadata:
+      labels: {app: home-agent, ramlaal/swarm: member}
+    spec:
+      containers:
+        - name: home-agent
+          image: ramlaal/orchestrator
+          ports:
+            - {name: http, containerPort: 8000}
+            - {name: a2a, containerPort: 9000}
+          envFrom:
+            - configMapRef: {name: ramlaal-common}
+            - configMapRef: {name: ramlaal-agent}
+          env:
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - {name: SWARM_ADVERTISE, value: "$(POD_IP):9000"}
+            - {name: RAMLAAL_INSTANCE, value: home-agent}
+            - {name: RAMLAAL_PURPOSE, value: "home automation - plans and manages household devices and routines"}
+            - {name: RAMLAAL_CAPABILITIES, value: home}
+            - {name: OTEL_SERVICE_NAME, value: orchestrator}
+            - {name: OTEL_SERVICE_INSTANCE_ID, value: home-agent}
+            - name: SWARM_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: SWARM_CLIENT_SECRET}}
+            - name: LLM_API_KEY
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: LITELLM_MASTER_KEY}}
+            # Created out of band (never committed); the agent starts without it and Home Assistant calls then fail.
+            - name: HA_TOKEN
+              valueFrom: {secretKeyRef: {name: ramlaal-home-assistant, key: HA_TOKEN, optional: true}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}

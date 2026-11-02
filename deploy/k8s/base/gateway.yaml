@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: gateway}
+  template:
+    metadata:
+      labels: {app: gateway}
+    spec:
+      # Codex needs a writable home; the tracked config.toml is copied into it on every start.
+      initContainers:
+        - name: codex-config
+          image: busybox:latest
+          command: [sh, -c, "cp /src/config.toml /codex-home/config.toml"]
+          volumeMounts:
+            - {name: codex-config, mountPath: /src, readOnly: true}
+            - {name: codex-home, mountPath: /codex-home}
+      containers:
+        - name: gateway
+          image: ramlaal/gateway
+          ports:
+            - {name: http, containerPort: 8090}
+          envFrom:
+            - configMapRef: {name: ramlaal-common}
+          env:
+            - name: LITELLM_API_KEY
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: LITELLM_MASTER_KEY}}
+            - {name: APPROVAL_MODE, value: auto}
+            - {name: OTEL_SERVICE_NAME, value: gateway}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: codex-home, mountPath: /codex-home}
+            - {name: workspaces, mountPath: /workspaces}
+      volumes:
+        - name: codex-config
+          configMap:
+            name: codex-config
+        - name: codex-home
+          emptyDir: {}
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: workspaces
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  selector: {app: gateway}
+  ports:
+    - {name: http, port: 8090}

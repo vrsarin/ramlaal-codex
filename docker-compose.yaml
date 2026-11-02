@@ -22,10 +22,18 @@ services:
       - 127.0.0.1:4318:4318
     volumes:
       - ./.data/otel:/data
+    healthcheck:
+      test: [CMD-SHELL, "curl -fs http://localhost:3000/api/health || wget -qO- http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
+  # Optional: only started with COMPOSE_PROFILES=ollama (see makefile OLLAMA=docker). By default the host's Ollama is used.
   ollama:
     container_name: ollama
     image: ollama/ollama:latest
+    profiles: [ollama]
     environment:
       OLLAMA_CONTEXT_LENGTH: '16384'
     volumes:
@@ -48,17 +56,25 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:example@pgvector:5432/litellm
       STORE_MODEL_IN_DB: 'True'
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       <<: *otel
       OTEL_SERVICE_NAME: litellm
       OTEL_EXPORTER: otlp_http
       OTEL_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel:4318}/v1/traces
     # volumes:
     #   - credentials:/run/secrets:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request as u; u.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
     depends_on:
       codex-config:
         condition: service_completed_successfully
       ollama:
         condition: service_healthy
+        required: false
       pgvector:
         condition: service_healthy
 
@@ -69,15 +85,21 @@ services:
       PGHOST: pgvector
       PGPASSWORD: example
       PGDATABASE: ramlaal
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       EMBED_MODEL: embeddinggemma
       <<: [*auth, *otel]
       OTEL_SERVICE_NAME: memory
     ports:
       - 127.0.0.1:8080:8080
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       ollama:
         condition: service_healthy
+        required: false
       pgvector:
         condition: service_healthy
 
@@ -108,16 +130,21 @@ services:
     volumes:
       - ./.data/codex-home-docker:/codex-home
       - ./.data/workspaces:/workspaces
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:8090/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       litellm:
-        condition: service_started
+        condition: service_healthy
       codex-config:
         condition: service_completed_successfully
 
   orchestrator:
     container_name: orchestrator
     build: src/orchestrator
-    environment:
+    environment: &orchestrator-env
       GATEWAY_URL: http://gateway:8090
       MEMORY_URL: http://memory:8080
       RAMLAAL_INSTANCE: ${RAMLAAL_INSTANCE:-ramlaal-1}
@@ -143,11 +170,95 @@ services:
       - ./.data/workspaces:/workspaces
     ports:
       - 127.0.0.1:8000:8000
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
-      - gateway
-      - memory
-      - nats
-      - keycloak
+      gateway:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  # Swarm peers: same image and config as orchestrator with their own identity. The orchestrator delegates
+  # to them by capability over NATS. Not published on the host; only the orchestrator is reachable on :8000.
+  coding-agent:
+    container_name: coding-agent
+    build: src/orchestrator
+    environment:
+      <<: *orchestrator-env
+      RAMLAAL_INSTANCE: coding-agent
+      RAMLAAL_PURPOSE: software engineering - writes, edits, tests and reviews code in the shared workspaces
+      RAMLAAL_CAPABILITIES: code
+      OTEL_SERVICE_INSTANCE_ID: coding-agent
+    volumes:
+      - ./.data/workspaces:/workspaces
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      gateway:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  home-agent:
+    container_name: home-agent
+    build: src/orchestrator
+    environment:
+      <<: *orchestrator-env
+      RAMLAAL_INSTANCE: home-agent
+      RAMLAAL_PURPOSE: home automation - plans and manages household devices and routines
+      RAMLAAL_CAPABILITIES: home
+      OTEL_SERVICE_INSTANCE_ID: home-agent
+      # Home Assistant REST API. HA_TOKEN comes from the shell or .env, never from this file.
+      HA_URL: ${HA_URL:-http://homeassistant:8123}
+      HA_TOKEN: ${HA_TOKEN:-}
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      gateway:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  # Home Assistant UI at http://localhost:8123. First run: finish onboarding, then create a long-lived token
+  # (Profile -> Security) and put it in .env as HA_TOKEN. Bridge networking: LAN device discovery (mDNS/SSDP) is
+  # limited on Docker Desktop for Mac, so add devices by IP or integrations that don't need discovery.
+  homeassistant:
+    container_name: homeassistant
+    image: ghcr.io/home-assistant/home-assistant:stable
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - ./.data/homeassistant:/config
+    ports:
+      - 127.0.0.1:8123:8123
+    healthcheck:
+      test: [CMD, curl, -fs, "http://localhost:8123/manifest.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   # Identity provider with a static, version-controlled realm (users: dev/dev; clients: ramlaal-ui, ramlaal-swarm).
   keycloak:
@@ -160,24 +271,50 @@ services:
       KC_HOSTNAME: http://localhost:8180
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
       KC_HTTP_ENABLED: 'true'
+      KC_HEALTH_ENABLED: 'true'
     volumes:
       - ./deploy/local/keycloak:/opt/keycloak/data/import:ro
     ports:
       - 127.0.0.1:8180:8080
+    healthcheck:
+      # no curl in the image: speak HTTP over bash /dev/tcp to the management port
+      test:
+        - CMD-SHELL
+        - |
+          exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '"status": "UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   nats:
     container_name: nats
     image: nats:2-alpine
+    command: [-m, '8222']
     restart: unless-stopped
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   ui:
     container_name: ui
     build: src/ui
     ports:
       - 127.0.0.1:8081:80
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
-      - orchestrator
-      - memory
+      orchestrator:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
 
   pgvector:
     container_name: pgvector

@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/homeassistant
+  - ../../components/observability
+
+configMapGenerator:
+  - name: ramlaal-common
+    behavior: merge
+    literals:
+      # Ollama runs on the Mac, not in the cluster; Rancher Desktop resolves this name to the host.
+      - OLLAMA_BASE_URL=http://host.rancher-desktop.internal:11434
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=local
+
+# Development-only values (the same ones docker compose and the Keycloak dev realm already use).
+# Production must provide its own ramlaal-secrets; never reuse these.
+secretGenerator:
+  - name: ramlaal-secrets
+    literals:
+      - LITELLM_MASTER_KEY=sk-ramlaal-local-dev
+      - POSTGRES_PASSWORD=example
+      - SWARM_CLIENT_SECRET=dev-swarm-secret
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    options:
+      disableNameSuffixHash: true

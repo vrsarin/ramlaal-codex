@@ -2,23 +2,38 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Docker: full stack",
+      "type": "shell",
+      "command": "docker compose up -d --build --wait",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
       "label": "Docker: memory stack",
       "type": "shell",
-      "command": "docker compose up -d --build --wait ollama pgvector keycloak memory",
+      "command": "docker compose up -d --build --wait otel pgvector keycloak memory",
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
     {
       "label": "Docker: memory + LiteLLM stack",
       "type": "shell",
-      "command": "docker compose up -d --build --wait ollama pgvector keycloak memory litellm",
+      "command": "docker compose up -d --build --wait otel pgvector keycloak memory litellm",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: down",
+      "type": "shell",
+      "command": "docker compose down",
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
     {
       "label": "Docker: pull memory models",
       "type": "shell",
-      "command": "docker compose exec ollama ollama pull embeddinggemma; docker compose exec ollama ollama pull llama3.2:3b",
+      "command": "ollama pull embeddinggemma; ollama pull llama3.2:3b",
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },

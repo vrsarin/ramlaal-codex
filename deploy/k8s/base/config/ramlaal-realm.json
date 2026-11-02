@@ -1,0 +1,47 @@
+{
+  "realm": "ramlaal",
+  "enabled": true,
+  "registrationAllowed": false,
+  "roles": { "realm": [{ "name": "swarm-peer", "description": "Ramlaal instance calling another instance on behalf of a user" }] },
+  "clients": [
+    {
+      "clientId": "ramlaal-ui",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:8081/*", "http://localhost:5173/*"],
+      "webOrigins": ["+"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocolMappers": [
+        {
+          "name": "ramlaal-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.custom.audience": "ramlaal", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      ]
+    },
+    {
+      "clientId": "ramlaal-swarm",
+      "publicClient": false,
+      "secret": "dev-swarm-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "protocolMappers": [
+        {
+          "name": "ramlaal-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.custom.audience": "ramlaal", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev", "enabled": true, "email": "dev@example.com", "emailVerified": true,
+      "firstName": "Dev", "lastName": "User",
+      "credentials": [{ "type": "password", "value": "dev", "temporary": false }]
+    },
+    {
+      "username": "service-account-ramlaal-swarm", "enabled": true, "serviceAccountClientId": "ramlaal-swarm",
+      "realmRoles": ["swarm-peer"]
+    }
+  ]
+}

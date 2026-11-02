@@ -1,0 +1,41 @@
+# Traces, logs and metrics in one place; Grafana on :3000, OTLP/HTTP on :4318.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: otel}
+  template:
+    metadata:
+      labels: {app: otel}
+    spec:
+      containers:
+        - name: otel
+          image: grafana/otel-lgtm:latest
+          ports:
+            - {name: grafana, containerPort: 3000}
+            - {name: otlp-http, containerPort: 4318}
+          readinessProbe:
+            httpGet: {path: /api/health, port: grafana}
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel
+spec:
+  selector: {app: otel}
+  ports:
+    - {name: grafana, port: 3000}
+    - {name: otlp-http, port: 4318}

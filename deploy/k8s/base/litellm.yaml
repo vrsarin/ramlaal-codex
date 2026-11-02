@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: litellm}
+  template:
+    metadata:
+      labels: {app: litellm}
+    spec:
+      containers:
+        - name: litellm
+          image: ramlaal/litellm
+          ports:
+            - {name: http, containerPort: 4000}
+          envFrom:
+            - configMapRef: {name: ramlaal-common}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: POSTGRES_PASSWORD}}
+            - name: LITELLM_MASTER_KEY
+              valueFrom: {secretKeyRef: {name: ramlaal-secrets, key: LITELLM_MASTER_KEY}}
+            - name: DATABASE_URL
+              value: postgresql://postgres:$(POSTGRES_PASSWORD)@postgres:5432/litellm
+            - {name: STORE_MODEL_IN_DB, value: "True"}
+            - {name: OTEL_SERVICE_NAME, value: litellm}
+            - {name: OTEL_EXPORTER, value: otlp_http}
+          startupProbe:
+            httpGet: {path: /health/liveliness, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /health/liveliness, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {memory: 2Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+spec:
+  selector: {app: litellm}
+  ports:
+    - {name: http, port: 4000}
