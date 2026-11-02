@@ -1,0 +1,26 @@
+# Use in an isolated CODEX_HOME; do not overwrite an existing user config.
+model = "codex-local"
+model_provider = "litellm"
+# Initial candidate value: qualify against the deployed model and actual requests.
+model_context_window = 65536
+
+[model_providers.litellm]
+name = "Ramona local LiteLLM"
+base_url = "http://127.0.0.1:4000/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+request_max_retries = 1
+stream_max_retries = 1
+stream_idle_timeout_ms = 300000
+
+[memories]
+generate_memories = false
+use_memories = false
+
+# Add this block only after the inference-only compatibility gate passes.
+[mcp_servers.ramona]
+url = "http://127.0.0.1:8080/mcp"
+bearer_token_env_var = "RAMONA_MEMORY_TOKEN"
+required = true
+startup_timeout_sec = 30
+tool_timeout_sec = 60

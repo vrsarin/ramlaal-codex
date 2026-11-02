@@ -1,0 +1,16 @@
+model_list:
+  - model_name: codex-local
+    litellm_params:
+      model: os.environ/OLLAMA_CHAT_ROUTE
+      api_base: http://ollama:11434
+  - model_name: memory-embedding
+    litellm_params:
+      model: os.environ/OLLAMA_EMBED_ROUTE
+      api_base: http://ollama:11434/v1
+      api_key: local-ollama-unused
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: false

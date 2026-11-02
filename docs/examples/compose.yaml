@@ -1,0 +1,113 @@
+# Documentation template. Copy this directory's deployment files into deploy/.
+# The app profile needs the Go implementation described in implementation.md.
+name: ramona-poc
+
+services:
+  postgres:
+    image: ${PGVECTOR_IMAGE:?Set PGVECTOR_IMAGE}
+    environment:
+      POSTGRES_USER: ramona
+      POSTGRES_DB: ramona
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U ramona -d ramona']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  ollama:
+    image: ${OLLAMA_IMAGE:?Set OLLAMA_IMAGE}
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-65536}
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    restart: unless-stopped
+
+  litellm:
+    image: ${LITELLM_IMAGE:?Set LITELLM_IMAGE}
+    command: [--config, /app/config.yaml, --host, 0.0.0.0, --port, '4000']
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY}
+      OLLAMA_CHAT_ROUTE: ${OLLAMA_CHAT_ROUTE:?Set OLLAMA_CHAT_ROUTE}
+      OLLAMA_EMBED_ROUTE: ${OLLAMA_EMBED_ROUTE:?Set OLLAMA_EMBED_ROUTE}
+    volumes:
+      - ./litellm.yaml:/app/config.yaml:ro
+    ports:
+      - 127.0.0.1:4000:4000
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  migrate:
+    profiles: [tools]
+    image: ramona-memory:poc
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: [migrate, up]
+    environment:
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: ramona
+      PGUSER: ramona
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      RAMONA_DB_PASSWORD: ${RAMONA_DB_PASSWORD:?Set RAMONA_DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  memory:
+    profiles: [app]
+    image: ramona-memory:poc
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: [serve]
+    environment:
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: ramona
+      PGUSER: ramona_app
+      PGPASSWORD: ${RAMONA_DB_PASSWORD:?Set RAMONA_DB_PASSWORD}
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY}
+      EMBEDDING_MODEL: memory-embedding
+      EMBEDDING_SPACE_ID: ${EMBEDDING_SPACE_ID:?Set EMBEDDING_SPACE_ID}
+      AUTH_FILE: /run/secrets/memory_auth
+      HTTP_ADDR: 0.0.0.0:8080
+      MAX_CONTEXT_BYTES: '8000'
+    secrets:
+      - memory_auth
+    ports:
+      - 127.0.0.1:8080:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    healthcheck:
+      test: [CMD, /app/ramona, healthcheck, --url, 'http://127.0.0.1:8080/readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_data:
+
+secrets:
+  memory_auth:
+    file: ./secrets/memory-auth.json

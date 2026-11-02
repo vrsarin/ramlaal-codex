@@ -427,7 +427,7 @@ FodyWeavers.xsd
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
 .data/
-docs/
+
 # Ramlaal build/runtime artifacts
 node_modules/
 .venv/
