@@ -9,6 +9,24 @@ Integrate Ram laal with Codex CLI and integrate litellm as llm router using jev 
 1. [x] Litellm as LLM provider
 1. [ ] Jev as LLM router
 
+## SDLC MCP services
+
+Ramlaal is a client of the independently released Forgejo and Wiki.js SDLC MCP servers. Their source is not embedded in this repository. Public images are published by `forgejo-wikijs-sdlc-mcp`:
+
+- `ghcr.io/vrsarin/forgejo-mcp-server`
+- `ghcr.io/vrsarin/wikijs-sdlc-mcp-server`
+
+The optional `compose.sdlc-mcp.yaml` overlay pulls and runs both services without adding a source-level dependency:
+
+```bash
+docker compose -f docker-compose.yaml -f compose.sdlc-mcp.yaml --profile sdlc-mcp pull
+docker compose -f docker-compose.yaml -f compose.sdlc-mcp.yaml --profile sdlc-mcp up -d
+```
+
+Copy `.env.example` to `.env`, set distinct `FORGEJO_MCP_CLIENT_TOKENS` and `WIKIJS_SDLC_MCP_CLIENT_TOKENS` JSON maps, and configure provider URLs before enabling the profile. The local endpoints default to `http://localhost:3010/mcp` and `http://localhost:3011/mcp`; containers on the Compose network use `http://forgejo-mcp:3000/mcp` and `http://wikijs-sdlc-mcp:3000/mcp`.
+
+Use `main` only for development. Pin a semantic-version tag or immutable digest for shared deployments. The current Ramlaal orchestrator does not yet contain the MCP client adapter that supplies MCP bearer credentials and per-provider user or bot credentials; the overlay packages the deployment boundary for that integration without pretending the client path is complete.
+
 ## Self-healing, self-learning swarm (scaffold)
 
 Inspired by [Agora v2](https://github.com/cwijayasundara/self-organizing-agents-v2): peers coordinate through an in-memory, per-user event ledger (nothing is persisted; a restart clears task state), and an independent reviewer gates every result.

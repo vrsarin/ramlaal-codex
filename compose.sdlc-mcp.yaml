@@ -1,0 +1,66 @@
+services:
+  forgejo-mcp:
+    image: ${FORGEJO_MCP_IMAGE:-ghcr.io/vrsarin/forgejo-mcp-server:main}
+    profiles: [sdlc-mcp]
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 3000
+      MCP_ALLOWED_HOSTS: forgejo-mcp,localhost,127.0.0.1
+      MCP_AUTH_MODE: static
+      MCP_CLIENT_TOKENS: ${FORGEJO_MCP_CLIENT_TOKENS:?Set FORGEJO_MCP_CLIENT_TOKENS to a JSON client-token map}
+      FORGEJO_URL: ${FORGEJO_URL:?Set FORGEJO_URL to the Forgejo origin reachable from this container}
+      FORGEJO_ALLOW_INSECURE_HTTP: ${FORGEJO_ALLOW_INSECURE_HTTP:-false}
+      SDLC_ALLOWED_REPOSITORIES: ${SDLC_ALLOWED_REPOSITORIES:?Set SDLC_ALLOWED_REPOSITORIES to owner/repository entries}
+      SDLC_ENABLE_WRITES: ${SDLC_ENABLE_WRITES:-false}
+    ports:
+      - 127.0.0.1:${FORGEJO_MCP_PORT:-3010}:3000
+    volumes:
+      - ./.data/forgejo-mcp:/data
+    healthcheck:
+      test: [CMD-SHELL, "wget --quiet --spider http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  wikijs-sdlc-mcp:
+    image: ${WIKIJS_SDLC_MCP_IMAGE:-ghcr.io/vrsarin/wikijs-sdlc-mcp-server:main}
+    profiles: [sdlc-mcp]
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 3000
+      MCP_ALLOWED_HOSTS: wikijs-sdlc-mcp,localhost,127.0.0.1
+      MCP_AUTH_MODE: static
+      MCP_CLIENT_TOKENS: ${WIKIJS_SDLC_MCP_CLIENT_TOKENS:?Set WIKIJS_SDLC_MCP_CLIENT_TOKENS to a JSON client-token map}
+      WIKIJS_MCP_URL: ${WIKIJS_MCP_URL:?Set WIKIJS_MCP_URL to the Wiki.js /_mcp endpoint reachable from this container}
+      WIKIJS_ALLOW_INSECURE_MCP_HTTP: ${WIKIJS_ALLOW_INSECURE_MCP_HTTP:-false}
+    ports:
+      - 127.0.0.1:${WIKIJS_SDLC_MCP_PORT:-3011}:3000
+    volumes:
+      - ./.data/wikijs-sdlc-mcp:/data
+    healthcheck:
+      test: [CMD-SHELL, "wget --quiet --spider http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
