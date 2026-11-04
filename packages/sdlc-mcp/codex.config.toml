@@ -1,0 +1,20 @@
+# Ramlaal Codex client configuration for the optional SDLC MCP Compose overlay.
+# All credentials are resolved from the gateway process environment.
+
+[mcp_servers.forgejo_workflow]
+url = "http://127.0.0.1:3010/mcp"
+bearer_token_env_var = "FORGEJO_MCP_BEARER_TOKEN"
+env_http_headers = { "X-Forgejo-Token" = "FORGEJO_ACCESS_TOKEN" }
+default_tools_approval_mode = "writes"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+required = false
+
+[mcp_servers.wikijs_sdlc]
+url = "http://127.0.0.1:3011/mcp"
+bearer_token_env_var = "WIKIJS_SDLC_MCP_BEARER_TOKEN"
+env_http_headers = { "X-Wikijs-Token" = "WIKIJS_ACCESS_TOKEN" }
+default_tools_approval_mode = "writes"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+required = false

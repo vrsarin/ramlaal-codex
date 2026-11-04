@@ -1,0 +1,43 @@
+{
+	admin off
+	auto_https disable_redirects
+	storage file_system {
+		root /gateway-caddy-data/caddy
+	}
+}
+
+home-assistant-upstream-tls:443 {
+	tls {
+		issuer acme https://step-ca:9000/acme/sdlc-home-assistant/directory {
+			trusted_roots /step-ca-root/root_ca.crt
+			disable_http_challenge
+		}
+	}
+	reverse_proxy 127.0.0.1:8123 {
+		header_up Host {$HOMEASSISTANT_HOSTNAME:home.localhost}
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+	}
+}
+
+https://{$KEYCLOAK_HOSTNAME:login.localhost} {
+	tls {
+		issuer acme https://step-ca:9000/acme/sdlc-services/directory {
+			trusted_roots /step-ca-root/root_ca.crt
+			disable_http_challenge
+		}
+	}
+	reverse_proxy https://proxy:443 {
+		header_up Host {$KEYCLOAK_HOSTNAME:login.localhost}
+		transport http {
+			tls_server_name {$KEYCLOAK_HOSTNAME:login.localhost}
+			tls_trust_pool file /step-ca-root/root_ca.crt
+		}
+	}
+}
+
+:80 {
+	bind 127.0.0.1 ::1
+	redir https://{$KEYCLOAK_HOSTNAME:login.localhost}{uri} permanent
+}

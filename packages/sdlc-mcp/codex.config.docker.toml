@@ -1,0 +1,19 @@
+# Ramlaal container-side Codex client configuration for the SDLC MCP overlay.
+
+[mcp_servers.forgejo_workflow]
+url = "http://forgejo-mcp:3000/mcp"
+bearer_token_env_var = "FORGEJO_MCP_BEARER_TOKEN"
+env_http_headers = { "X-Forgejo-Token" = "FORGEJO_ACCESS_TOKEN" }
+default_tools_approval_mode = "writes"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+required = false
+
+[mcp_servers.wikijs_sdlc]
+url = "http://wikijs-sdlc-mcp:3000/mcp"
+bearer_token_env_var = "WIKIJS_SDLC_MCP_BEARER_TOKEN"
+env_http_headers = { "X-Wikijs-Token" = "WIKIJS_ACCESS_TOKEN" }
+default_tools_approval_mode = "writes"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+required = false

@@ -1,0 +1,377 @@
+name: ${COMPOSE_PROJECT_NAME:-forgejo-wikijs-sdlc}
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:18}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      FORGEJO_DB_NAME: ${FORGEJO_DB_NAME:?Set FORGEJO_DB_NAME in .env}
+      FORGEJO_DB_USER: ${FORGEJO_DB_USER:?Set FORGEJO_DB_USER in .env}
+      FORGEJO_DB_PASSWORD: ${FORGEJO_DB_PASSWORD:?Set FORGEJO_DB_PASSWORD in .env}
+      WIKIJS_DB_NAME: ${WIKIJS_DB_NAME:?Set WIKIJS_DB_NAME in .env}
+      WIKIJS_DB_USER: ${WIKIJS_DB_USER:?Set WIKIJS_DB_USER in .env}
+      WIKIJS_DB_PASSWORD: ${WIKIJS_DB_PASSWORD:?Set WIKIJS_DB_PASSWORD in .env}
+      KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME:?Set KEYCLOAK_DB_NAME in .env}
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:?Set KEYCLOAK_DB_USER in .env}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD in .env}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${POSTGRES_PASSWORD}" psql -U "$${POSTGRES_USER}" -d "$${FORGEJO_DB_NAME}" -tAc 'SELECT 1' >/dev/null
+          && PGPASSWORD="$${POSTGRES_PASSWORD}" psql -U "$${POSTGRES_USER}" -d "$${WIKIJS_DB_NAME}" -tAc 'SELECT 1' >/dev/null
+          && PGPASSWORD="$${POSTGRES_PASSWORD}" psql -U "$${POSTGRES_USER}" -d "$${KEYCLOAK_DB_NAME}" -tAc 'SELECT 1' >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./deploy/postgres/init-databases.sh:/docker-entrypoint-initdb.d/10-init-databases.sh:ro
+    networks:
+      - database
+
+  forgejo:
+    image: ${FORGEJO_IMAGE:-codeberg.org/forgejo/forgejo:17.0.1}
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SSL_CERT_FILE: /step-ca-root/root_ca.crt
+      USER_UID: ${FORGEJO_UID:-1000}
+      USER_GID: ${FORGEJO_GID:-1000}
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: db:5432
+      FORGEJO__database__NAME: ${FORGEJO_DB_NAME:?Set FORGEJO_DB_NAME in .env}
+      FORGEJO__database__USER: ${FORGEJO_DB_USER:?Set FORGEJO_DB_USER in .env}
+      FORGEJO__database__PASSWD: ${FORGEJO_DB_PASSWORD:?Set FORGEJO_DB_PASSWORD in .env}
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: ${FORGEJO_DISABLE_REGISTRATION:-false}
+      FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
+      FORGEJO__oauth2_client__ACCOUNT_LINKING: login
+      FORGEJO__oauth2_client__USERNAME: preferred_username
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:3000/api/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    ports:
+      - "${FORGEJO_SSH_BIND_ADDRESS:-127.0.0.1}:${FORGEJO_SSH_PORT:-2222}:22"
+      # - "8081:3000"
+    expose:
+      - "3000"
+    entrypoint:
+      - /usr/local/bin/start-forgejo.sh
+    volumes:
+      - forgejo-data:/data
+      - step-ca-public:/step-ca-root:ro
+      - ./deploy/forgejo/start.sh:/usr/local/bin/start-forgejo.sh:ro
+    networks:
+      - frontend
+      - database
+
+  forgejo-init:
+    image: ${FORGEJO_IMAGE:-codeberg.org/forgejo/forgejo:17.0.1}
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      SSL_CERT_FILE: /step-ca-root/root_ca.crt
+    depends_on:
+      forgejo:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      proxy:
+        condition: service_started
+    user: "${FORGEJO_UID:-1000}:${FORGEJO_GID:-1000}"
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/bootstrap-forgejo.sh
+    volumes:
+      - forgejo-data:/data
+      - step-ca-public:/step-ca-root:ro
+      - ./deploy/forgejo/bootstrap.sh:/usr/local/bin/bootstrap-forgejo.sh:ro
+    networks:
+      - frontend
+      - database
+
+  wikijs:
+    image: ${WIKIJS_IMAGE:-ghcr.io/requarks/wiki:3}
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_EXTRA_CA_CERTS: /step-ca-root/root_ca.crt
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_SSL: "false"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    # ports:
+    #   - "8082:3000"
+    expose:
+      - "3000"
+    entrypoint:
+      - tini
+      - -s
+      - --
+      - /opt/wikijs-bootstrap/start.sh
+    volumes:
+      - step-ca-public:/step-ca-root:ro
+      - ./deploy/wikijs/start.sh:/opt/wikijs-bootstrap/start.sh:ro
+    networks:
+      - frontend
+      - database
+
+  wikijs-init:
+    image: ${WIKIJS_IMAGE:-ghcr.io/requarks/wiki:3}
+    restart: "no"
+    env_file:
+      - .env
+    depends_on:
+      wikijs:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      proxy:
+        condition: service_started
+    entrypoint:
+      - node
+      - /opt/wikijs-bootstrap/bootstrap.mjs
+    volumes:
+      - step-ca-public:/step-ca-root:ro
+      - ./deploy/wikijs/bootstrap.mjs:/opt/wikijs-bootstrap/bootstrap.mjs:ro
+      - ./deploy/wikijs/mcp-permission.mjs:/opt/wikijs-bootstrap/mcp-permission.mjs:ro
+    networks:
+      - frontend
+      - database
+
+  forgejo-mcp:
+    profiles: [mcp]
+    image: ${FORGEJO_MCP_IMAGE:-ghcr.io/vrsarin/forgejo-mcp-server:main}
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    restart: unless-stopped
+    depends_on:
+      forgejo:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      keycloak-mcp-init:
+        condition: service_completed_successfully
+      proxy:
+        condition: service_started
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 3000
+      MCP_ALLOWED_HOSTS: ${FORGEJO_MCP_HOSTNAME:-forgejo-mcp.localhost},${KEYCLOAK_HOSTNAME:-auth.localhost},forgejo-mcp,localhost,127.0.0.1
+      MCP_ALLOWED_ORIGINS: ${FORGEJO_MCP_ALLOWED_ORIGINS:-}
+      ENABLE_OIDC: ${ENABLE_OIDC:-true}
+      ENABLE_TLS: "false"
+      MCP_OIDC_ISSUER: https://${KEYCLOAK_HOSTNAME:-login.localhost}/realms/${KEYCLOAK_REALM:-sdlc}
+      MCP_OIDC_RESOURCE: ${FORGEJO_MCP_PUBLIC_URL:-https://forgejo-mcp.localhost/mcp}
+      MCP_OIDC_AUDIENCE: ${FORGEJO_MCP_PUBLIC_URL:-https://forgejo-mcp.localhost/mcp}
+      MCP_OIDC_REQUIRED_REALM_ROLE: mcp-user
+      FORGEJO_URL: https://${FORGEJO_HOSTNAME:-git.localhost}
+      FORGEJO_ALLOW_INSECURE_HTTP: "false"
+      # No shared Forgejo credential: each user connects Forgejo once through OAuth (run
+      # `make register-forgejo-oauth` to create the application and fill the values below).
+      FORGEJO_PUBLIC_URL: https://${FORGEJO_HOSTNAME:-git.localhost}
+      FORGEJO_OAUTH_CLIENT_ID: ${FORGEJO_OAUTH_CLIENT_ID:-}
+      FORGEJO_OAUTH_CLIENT_SECRET: ${FORGEJO_OAUTH_CLIENT_SECRET:-}
+      FORGEJO_OAUTH_REDIRECT_URL: ${FORGEJO_OAUTH_REDIRECT_URL:-http://localhost/oauth/forgejo/callback}
+      FORGEJO_TOKEN_ENCRYPTION_KEY: ${FORGEJO_TOKEN_ENCRYPTION_KEY:-}
+      FORGEJO_TOKEN_STORE_PATH: /data/forgejo-grants.enc
+      FORGEJO_MCP_LOGIN_CLIENT_ID: ${FORGEJO_MCP_LOGIN_CLIENT_ID:-forgejo-mcp-login}
+      SDLC_ALLOWED_REPOSITORIES: ${SDLC_ALLOWED_REPOSITORIES:-example-owner/example-repository}
+      SDLC_ENABLE_WRITES: ${SDLC_ENABLE_WRITES:-false}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    expose:
+      - "3000"
+    volumes:
+      - forgejo-mcp-data:/data
+    networks:
+      - frontend
+
+  wikijs-sdlc-mcp:
+    profiles: [mcp]
+    image: ${WIKIJS_SDLC_MCP_IMAGE:-ghcr.io/vrsarin/wikijs-sdlc-mcp-server:main}
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    restart: unless-stopped
+    depends_on:
+      wikijs:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      keycloak-mcp-init:
+        condition: service_completed_successfully
+      proxy:
+        condition: service_started
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 3000
+      MCP_ALLOWED_HOSTS: ${WIKIJS_SDLC_MCP_HOSTNAME:-sdlc-mcp.localhost},${KEYCLOAK_HOSTNAME:-auth.localhost},${WIKIJS_HOSTNAME:-wiki.localhost},wikijs-sdlc-mcp,localhost,127.0.0.1
+      MCP_ALLOWED_ORIGINS: ${WIKIJS_SDLC_MCP_ALLOWED_ORIGINS:-}
+      ENABLE_OIDC: ${ENABLE_OIDC:-true}
+      ENABLE_TLS: "false"
+      MCP_OIDC_ISSUER: https://${KEYCLOAK_HOSTNAME:-login.localhost}/realms/${KEYCLOAK_REALM:-sdlc}
+      MCP_OIDC_RESOURCE: ${WIKIJS_SDLC_MCP_PUBLIC_URL:-https://sdlc-mcp.localhost/mcp}
+      MCP_OIDC_AUDIENCE: ${WIKIJS_SDLC_MCP_PUBLIC_URL:-https://sdlc-mcp.localhost/mcp}
+      # A realm role, not a client role, so pre-registered and CIMD clients are authorized alike.
+      MCP_OIDC_REQUIRED_REALM_ROLE: mcp-user
+      WIKIJS_MCP_URL: https://${WIKIJS_HOSTNAME:-wiki.localhost}/_mcp
+      WIKIJS_ALLOW_INSECURE_MCP_HTTP: "false"
+      # Users connect Wiki.js once through OAuth; Wiki.js only allows https or loopback http redirects,
+      # so local development returns through http://localhost (routed by the proxy).
+      WIKIJS_OAUTH_REDIRECT_URL: ${WIKIJS_OAUTH_REDIRECT_URL:-http://localhost/oauth/wikijs/callback}
+      WIKIJS_TOKEN_ENCRYPTION_KEY: ${WIKIJS_TOKEN_ENCRYPTION_KEY:?Set WIKIJS_TOKEN_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
+      WIKIJS_TOKEN_STORE_PATH: /data/wikijs-grants.enc
+      WIKIJS_MCP_LOGIN_CLIENT_ID: ${WIKIJS_MCP_LOGIN_CLIENT_ID:-wikijs-mcp-login}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    expose:
+      - "3000"
+    volumes:
+      - wikijs-sdlc-mcp-data:/data
+    networks:
+      - frontend
+
+  keycloak-mcp-init:
+    profiles: [mcp]
+    image: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.8.1}
+    restart: "no"
+    env_file:
+      - .env
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      proxy:
+        condition: service_started
+    entrypoint:
+      - /bin/bash
+      - /opt/keycloak-bootstrap/configure-mcp.sh
+    volumes:
+      - ./deploy/keycloak/configure-mcp.sh:/opt/keycloak-bootstrap/configure-mcp.sh:ro
+    networks:
+      - frontend
+
+  keycloak:
+    image: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.8.1}
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - start
+      - --import-realm
+      # Experimental in Keycloak 26.8.1. Enabled only in this local test stack.
+      - --features=cimd,resource-indicators
+    entrypoint:
+      - /opt/keycloak-bootstrap/start.sh
+    environment:
+      KC_DB: postgres
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -ec 'exec 3<>/dev/tcp/127.0.0.1/9000;
+          printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
+          grep -q '"'"'"status"'"'"[[:space:]]*:[[:space:]]*"'"'"UP"'"'"' <&3'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    mem_limit: 1g
+    expose:
+      - "8080"
+    volumes:
+      - ./deploy/keycloak/sdlc-realm.json:/opt/keycloak/data/import/${KEYCLOAK_REALM:-sdlc}-realm.json:ro
+      - ./deploy/keycloak/start.sh:/opt/keycloak-bootstrap/start.sh:ro
+    networks:
+      - frontend
+      - database
+
+  proxy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      forgejo:
+        condition: service_healthy
+      wikijs:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:80:80"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      frontend:
+        aliases:
+          - ${FORGEJO_HOSTNAME:-git.localhost}
+          - ${WIKIJS_HOSTNAME:-wiki.localhost}
+          - ${KEYCLOAK_HOSTNAME:-login.localhost}
+          - ${HOMEASSISTANT_HOSTNAME:-home.localhost}
+          - ${FORGEJO_MCP_HOSTNAME:-forgejo-mcp.localhost}
+          - ${WIKIJS_SDLC_MCP_HOSTNAME:-sdlc-mcp.localhost}
+
+volumes:
+  forgejo-mcp-data:
+  wikijs-sdlc-mcp-data:
+  forgejo-data:
+  postgres-data:
+
+networks:
+  frontend:
+  database:
+    internal: true

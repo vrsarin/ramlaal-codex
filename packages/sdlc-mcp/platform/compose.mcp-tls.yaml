@@ -1,0 +1,154 @@
+services:
+  proxy:
+    volumes:
+      - ./deploy/Caddyfile.mcp-tls:/etc/caddy/Caddyfile:ro
+      - step-ca-public:/step-ca-root:ro
+
+  forgejo-mcp:
+    environment:
+      ENABLE_TLS: "true"
+      TLS_MODE: static
+      TLS_CERT_PATH: /tls/forgejo-mcp-tls.crt
+      TLS_KEY_PATH: /tls/forgejo-mcp-tls.key
+      NODE_EXTRA_CA_CERTS: /step-ca-root/root_ca.crt
+      MCP_ALLOWED_HOSTS: ${FORGEJO_MCP_HOSTNAME:-forgejo-mcp.localhost},${KEYCLOAK_HOSTNAME:-auth.localhost},forgejo-mcp,forgejo-mcp-tls,localhost,127.0.0.1
+    volumes:
+      - forgejo-mcp-cert:/tls:ro
+      - step-ca-public:/step-ca-root:ro
+    depends_on:
+      mcp-cert-manager:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('https').get({host:'127.0.0.1',port:3000,path:'/healthz',servername:'forgejo-mcp-tls',
+          ca:require('fs').readFileSync('/step-ca-root/root_ca.crt')},
+          r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
+    networks:
+      frontend:
+        aliases: [forgejo-mcp-tls]
+      gateway-net:
+        aliases: [forgejo-mcp-tls]
+
+  wikijs-sdlc-mcp:
+    environment:
+      ENABLE_TLS: "true"
+      TLS_MODE: static
+      TLS_CERT_PATH: /tls/wikijs-mcp-tls.crt
+      TLS_KEY_PATH: /tls/wikijs-mcp-tls.key
+      NODE_EXTRA_CA_CERTS: /step-ca-root/root_ca.crt
+      MCP_ALLOWED_HOSTS: ${WIKIJS_SDLC_MCP_HOSTNAME:-sdlc-mcp.localhost},${KEYCLOAK_HOSTNAME:-auth.localhost},${WIKIJS_HOSTNAME:-wiki.localhost},wikijs-sdlc-mcp,wikijs-mcp-tls,localhost,127.0.0.1
+    volumes:
+      - wikijs-mcp-cert:/tls:ro
+      - step-ca-public:/step-ca-root:ro
+    depends_on:
+      mcp-cert-manager:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('https').get({host:'127.0.0.1',port:3000,path:'/healthz',servername:'wikijs-mcp-tls',
+          ca:require('fs').readFileSync('/step-ca-root/root_ca.crt')},
+          r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
+    networks:
+      frontend:
+        aliases: [wikijs-mcp-tls]
+      gateway-net:
+        aliases: [wikijs-mcp-tls]
+
+  homeassistant-mcp:
+    environment:
+      ENABLE_TLS: "true"
+      TLS_MODE: static
+      TLS_CERT_PATH: /tls/homeassistant-mcp-tls.crt
+      TLS_KEY_PATH: /tls/homeassistant-mcp-tls.key
+      NODE_EXTRA_CA_CERTS: /step-ca-root/root_ca.crt
+    volumes:
+      - homeassistant-mcp-cert:/tls:ro
+      - step-ca-public:/step-ca-root:ro
+    depends_on:
+      mcp-cert-manager:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('https').get({host:'127.0.0.1',port:3000,path:'/healthz',servername:'homeassistant-mcp-tls',
+          ca:require('fs').readFileSync('/step-ca-root/root_ca.crt')},
+          r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
+    networks:
+      frontend:
+        aliases: [homeassistant-mcp-tls]
+      gateway-net:
+        aliases: [homeassistant-mcp-tls]
+
+  gateway-auth:
+    environment:
+      SSRF_ALLOWED_HOSTS: forgejo-mcp,wikijs-sdlc-mcp,homeassistant-mcp,forgejo-mcp-tls,wikijs-mcp-tls,homeassistant-mcp-tls
+
+  gateway-registry:
+    environment:
+      SSRF_ALLOWED_HOSTS: forgejo-mcp,wikijs-sdlc-mcp,homeassistant-mcp,forgejo-mcp-tls,wikijs-mcp-tls,homeassistant-mcp-tls
+
+  mcp-cert-volume-init:
+    profiles: [mcp-tls]
+    image: alpine:3.21
+    network_mode: none
+    entrypoint: ["/bin/sh", "/scripts/prepare-mcp-certs.sh"]
+    volumes:
+      - ./deploy/step-ca/prepare-mcp-certs.sh:/scripts/prepare-mcp-certs.sh:ro
+      - mcp-cert-state:/state
+      - forgejo-mcp-cert:/forgejo
+      - wikijs-mcp-cert:/wikijs
+      - homeassistant-mcp-cert:/homeassistant
+    restart: "no"
+
+  mcp-cert-manager:
+    profiles: [mcp-tls]
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    user: "1000:1000"
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /data/config
+    volumes:
+      - ./deploy/step-ca/Caddyfile.mcp-certs:/etc/caddy/Caddyfile:ro
+      - step-ca-public:/step-ca-root:ro
+      - mcp-cert-state:/data
+      - forgejo-mcp-cert:/data/caddy/certificates/step-ca-9000-acme-sdlc-services-directory/forgejo-mcp-tls
+      - wikijs-mcp-cert:/data/caddy/certificates/step-ca-9000-acme-sdlc-services-directory/wikijs-mcp-tls
+      - homeassistant-mcp-cert:/data/caddy/certificates/step-ca-9000-acme-sdlc-services-directory/homeassistant-mcp-tls
+    depends_on:
+      step-ca:
+        condition: service_healthy
+      mcp-cert-volume-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          for name in forgejo-mcp-tls wikijs-mcp-tls homeassistant-mcp-tls; do
+          base="/data/caddy/certificates/step-ca-9000-acme-sdlc-services-directory/$$name/$$name";
+          [ -s "$$base.crt" ] && [ -s "$$base.key" ] || exit 1; done
+      interval: 5s
+      timeout: 3s
+      retries: 36
+    networks:
+      step-ca-net:
+        aliases: [forgejo-mcp-tls, wikijs-mcp-tls, homeassistant-mcp-tls]
+    restart: unless-stopped
+
+volumes:
+  mcp-cert-state:
+  forgejo-mcp-cert:
+  wikijs-mcp-cert:
+  homeassistant-mcp-cert:

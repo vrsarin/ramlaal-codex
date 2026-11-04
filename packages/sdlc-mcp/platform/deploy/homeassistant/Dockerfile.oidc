@@ -1,0 +1,14 @@
+FROM alpine:3.21@sha256:ee16d92f96db08d9d2d07da48555a27f3a69d8f0759021dbc601195ed0d2b5bd
+RUN addgroup -S installer \
+    && adduser -S -D -H -u 10001 -G installer installer \
+    && wget -q -O /tmp/oidc.zip https://github.com/christiaangoossens/hass-oidc-auth/releases/download/v1.2.1/hass-oidc-auth.zip \
+    && echo 'e5badaaacaa63cfd6fe733924a05e76d75058836190398598fb24de57cd47ccd  /tmp/oidc.zip' | sha256sum -c - \
+    && mkdir /component /target \
+    && unzip -q /tmp/oidc.zip -d /component \
+    && rm /tmp/oidc.zip \
+    && chown installer:installer /target \
+    && chmod 0700 /target
+COPY install-oidc.sh /install-oidc.sh
+VOLUME /target
+USER 10001:10001
+ENTRYPOINT ["/bin/sh", "/install-oidc.sh"]

@@ -1,0 +1,144 @@
+{
+	admin off
+	auto_https disable_redirects
+	acme_ca https://step-ca:9000/acme/sdlc-services/directory
+	acme_ca_root /step-ca-root/root_ca.crt
+}
+
+(public_tls) {
+	tls {
+		issuer acme https://step-ca:9000/acme/sdlc-services/directory {
+			trusted_roots /step-ca-root/root_ca.crt
+			disable_http_challenge
+		}
+	}
+}
+
+(mcp_tls) {
+	transport http {
+		tls_trust_pool file /step-ca-root/root_ca.crt
+	}
+}
+
+https://{$FORGEJO_HOSTNAME:git.localhost} {
+	import public_tls
+	@forgejo_mcp_login {
+		path /user/login
+		header_regexp Cookie "(?i)(^|;[[:space:]]*)redirect_to=%2Flogin%2Foauth%2Fauthorize%3F[^;]*%252Foauth%252Fforgejo%252Fcallback"
+	}
+	redir @forgejo_mcp_login /user/oauth2/Keycloak 303
+	reverse_proxy forgejo:3000
+}
+
+https://{$WIKIJS_HOSTNAME:wiki.localhost} {
+	import public_tls
+	@wikijs_mcp_consent {
+		path /_authorize
+		query redirect_uri={$WIKIJS_OAUTH_REDIRECT_URL:http://localhost/oauth/wikijs/callback}
+		not query mcp_sso=1
+	}
+	handle @wikijs_mcp_consent {
+		reverse_proxy https://wikijs-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	handle {
+		reverse_proxy wikijs:3000
+	}
+}
+
+https://{$KEYCLOAK_HOSTNAME:login.localhost} {
+	import public_tls
+	@forgejo_mcp_auth {
+		path /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth
+		query resource={$FORGEJO_MCP_PUBLIC_URL:https://forgejo-mcp.localhost/mcp}
+	}
+	handle @forgejo_mcp_auth {
+		reverse_proxy https://forgejo-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	@wikijs_mcp_auth {
+		path /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth
+		query resource={$WIKIJS_SDLC_MCP_PUBLIC_URL:https://sdlc-mcp.localhost/mcp}
+	}
+	handle @wikijs_mcp_auth {
+		reverse_proxy https://wikijs-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	handle /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth-upstream {
+		rewrite * /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		reverse_proxy keycloak:8080
+	}
+}
+
+https://{$FORGEJO_MCP_HOSTNAME:forgejo-mcp.localhost} {
+	import public_tls
+	reverse_proxy https://forgejo-mcp-tls:3000 {
+		import mcp_tls
+	}
+}
+
+https://{$WIKIJS_SDLC_MCP_HOSTNAME:sdlc-mcp.localhost} {
+	import public_tls
+	reverse_proxy https://wikijs-mcp-tls:3000 {
+		import mcp_tls
+	}
+}
+
+https://{$GATEWAY_HOSTNAME:mcp-gateway.localhost} {
+	import public_tls
+	reverse_proxy gateway-registry:8080
+}
+
+https://{$HOMEASSISTANT_HOSTNAME:home.localhost} {
+	import public_tls
+	reverse_proxy https://home-assistant-upstream-tls:443 {
+		transport http {
+			tls_server_name home-assistant-upstream-tls
+			tls_trust_pool file /step-ca-root/root_ca.crt
+		}
+	}
+}
+
+# Provider OAuth clients require an exact loopback HTTP callback. Nothing else is exposed here.
+http://localhost {
+	handle /oauth/wikijs/* {
+		reverse_proxy https://wikijs-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	handle /oauth/forgejo/* {
+		reverse_proxy https://forgejo-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	handle /oauth/homeassistant/* {
+		reverse_proxy https://homeassistant-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	handle /internal/homeassistant/discovery/connect {
+		rewrite * /internal/discovery/connect
+		reverse_proxy https://homeassistant-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	handle /internal/homeassistant/mcp {
+		rewrite * /mcp
+		reverse_proxy https://homeassistant-mcp-tls:3000 {
+			import mcp_tls
+		}
+	}
+	handle {
+		respond "not found" 404
+	}
+}
+
+http://{$FORGEJO_HOSTNAME:git.localhost}, http://{$WIKIJS_HOSTNAME:wiki.localhost}, http://{$KEYCLOAK_HOSTNAME:login.localhost}, http://{$FORGEJO_MCP_HOSTNAME:forgejo-mcp.localhost}, http://{$WIKIJS_SDLC_MCP_HOSTNAME:sdlc-mcp.localhost}, http://{$GATEWAY_HOSTNAME:mcp-gateway.localhost}, http://{$HOMEASSISTANT_HOSTNAME:home.localhost} {
+	redir https://{host}{uri} permanent
+}

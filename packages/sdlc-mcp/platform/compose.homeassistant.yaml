@@ -1,0 +1,164 @@
+services:
+  step-ca-secrets-init:
+    profiles: [homeassistant]
+    image: alpine/openssl:3.5.4
+    entrypoint: ["/bin/sh", "/scripts/init-secrets.sh"]
+    volumes:
+      - step-ca-secrets:/secrets
+      - step-ca-public:/public
+      - ./deploy/step-ca/init-secrets.sh:/scripts/init-secrets.sh:ro
+    networks: [step-ca-net]
+    restart: "no"
+
+  step-ca-init:
+    profiles: [homeassistant]
+    image: smallstep/step-ca:0.30.2
+    entrypoint: ["/bin/sh", "/scripts/init-ca.sh"]
+    volumes:
+      - step-ca-data:/home/step
+      - step-ca-secrets:/step-secrets:ro
+      - step-ca-public:/public
+      - ./deploy/step-ca/init-ca.sh:/scripts/init-ca.sh:ro
+    depends_on:
+      step-ca-secrets-init:
+        condition: service_completed_successfully
+    networks: [step-ca-net]
+    restart: "no"
+
+  step-ca:
+    profiles: [homeassistant]
+    image: smallstep/step-ca:0.30.2
+    entrypoint: ["/usr/local/bin/step-ca"]
+    command: ["--password-file", "/step-secrets/ca-password", "/home/step/config/ca.json"]
+    volumes:
+      - step-ca-data:/home/step
+      - step-ca-secrets:/step-secrets:ro
+      - ./deploy/step-ca/test-ca.sh:/scripts/test-ca.sh:ro
+    depends_on:
+      step-ca-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "step ca health --ca-url https://localhost:9000 --root /home/step/certs/root_ca.crt | grep -q '^ok'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [step-ca-net]
+    restart: unless-stopped
+
+  home-assistant-oidc-init:
+    profiles: [homeassistant]
+    build:
+      context: deploy/homeassistant
+      dockerfile: Dockerfile.oidc
+    volumes:
+      - home-assistant-oidc:/target
+    networks: [frontend]
+    restart: "no"
+
+  home-assistant-config-init:
+    profiles: [homeassistant]
+    image: ${HOME_ASSISTANT_IMAGE:-ghcr.io/home-assistant/home-assistant:2026.10.4@sha256:23f4dfbb69ce76315dbc4de7915504f1c2dcecd7ca2648113a493a385972e133}
+    entrypoint: ["python", "/scripts/configure-oidc.py"]
+    environment:
+      KEYCLOAK_HOSTNAME: ${KEYCLOAK_HOSTNAME:-login.localhost}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-sdlc}
+    volumes:
+      - home-assistant-data:/config
+      - ./deploy/homeassistant/configure-oidc.py:/scripts/configure-oidc.py:ro
+    networks: [frontend]
+    restart: "no"
+
+  home-assistant:
+    profiles: [homeassistant]
+    build:
+      context: deploy/homeassistant
+      dockerfile: Dockerfile
+      args:
+        HOME_ASSISTANT_IMAGE: ${HOME_ASSISTANT_IMAGE:-ghcr.io/home-assistant/home-assistant:2026.10.4@sha256:23f4dfbb69ce76315dbc4de7915504f1c2dcecd7ca2648113a493a385972e133}
+        CADDY_IMAGE: ${CADDY_IMAGE:-caddy:2-alpine@sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      KEYCLOAK_HOSTNAME: ${KEYCLOAK_HOSTNAME:-login.localhost}
+      SSL_CERT_FILE: /step-ca-root/root_ca.crt
+      REQUESTS_CA_BUNDLE: /step-ca-root/root_ca.crt
+    ports:
+      - "127.0.0.1:8123:8123"
+    volumes:
+      - home-assistant-data:/config
+      - home-assistant-oidc:/config/custom_components/auth_oidc:ro
+      - ./deploy/homeassistant/identity/custom_components/sdlc_mcp_identity:/config/custom_components/sdlc_mcp_identity:ro
+      - ./deploy/homeassistant/Caddyfile.keycloak-loopback:/scripts/Caddyfile:ro
+      - step-ca-public:/step-ca-root:ro
+      - home-assistant-tls-data:/sdlc-caddy-data
+    depends_on:
+      home-assistant-oidc-init:
+        condition: service_completed_successfully
+      step-ca:
+        condition: service_healthy
+    networks:
+      frontend:
+      gateway-net:
+        aliases: [home-assistant-upstream-tls]
+      step-ca-net:
+        aliases: [home-assistant-upstream-tls]
+
+  homeassistant-mcp:
+    profiles: [homeassistant]
+    image: ${HOMEASSISTANT_MCP_IMAGE:-ghcr.io/vrsarin/homeassistant-mcp-server:main}
+    init: true
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    environment:
+      MCP_OIDC_ISSUER: https://${KEYCLOAK_HOSTNAME:-login.localhost}/realms/${KEYCLOAK_REALM:-sdlc}
+      HOMEASSISTANT_PUBLIC_URL: https://${HOMEASSISTANT_HOSTNAME:-home.localhost}/
+      MCP_OIDC_AUDIENCE: ${HOMEASSISTANT_MCP_SERVER_CLIENT_ID:-homeassistant-mcp-server}
+      HOMEASSISTANT_INTERNAL_URL: https://home-assistant-upstream-tls
+      NODE_EXTRA_CA_CERTS: /step-ca-root/root_ca.crt
+      HOMEASSISTANT_DISCOVERY_SUBJECT_FILE: /gateway-identity/home-assistant-discovery.id
+      HOMEASSISTANT_TOKEN_ENCRYPTION_KEY: ${HOMEASSISTANT_TOKEN_ENCRYPTION_KEY:-}
+    volumes:
+      - homeassistant-mcp-data:/data
+      - gateway-identity:/gateway-identity:ro
+      - step-ca-public:/step-ca-root:ro
+    depends_on:
+      home-assistant:
+        condition: service_started
+      gateway-keycloak-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [frontend, gateway-net]
+    restart: unless-stopped
+
+volumes:
+  homeassistant-mcp-data:
+  home-assistant-tls-data:
+  home-assistant-data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-forgejo-wikijs-sdlc}_home-assistant-data
+  home-assistant-oidc:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-forgejo-wikijs-sdlc}_home-assistant-oidc
+  step-ca-data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-forgejo-wikijs-sdlc}_step-ca-data
+  step-ca-secrets:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-forgejo-wikijs-sdlc}_step-ca-secrets
+  step-ca-public:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-forgejo-wikijs-sdlc}_step-ca-public
+
+networks:
+  step-ca-net:
+    internal: true

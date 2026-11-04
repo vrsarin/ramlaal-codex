@@ -1,0 +1,16 @@
+{
+	admin off
+	auto_https disable_redirects
+	acme_ca https://step-ca:9000/acme/sdlc-services/directory
+	acme_ca_root /step-ca-root/root_ca.crt
+}
+
+forgejo-mcp-tls, wikijs-mcp-tls, homeassistant-mcp-tls {
+	tls {
+		issuer acme https://step-ca:9000/acme/sdlc-services/directory {
+			trusted_roots /step-ca-root/root_ca.crt
+			disable_http_challenge
+		}
+	}
+	respond "Certificate management endpoint" 503
+}

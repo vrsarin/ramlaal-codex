@@ -1,0 +1,149 @@
+{
+  "realm": "${KEYCLOAK_REALM}",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "mcp-user",
+        "description": "May access configured MCP resources through group membership"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "${FORGEJO_OIDC_CLIENT_ID}",
+      "name": "Forgejo",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${FORGEJO_OIDC_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://${FORGEJO_HOSTNAME}/user/oauth2/*"
+      ],
+      "webOrigins": [
+        "https://${FORGEJO_HOSTNAME}"
+      ]
+    },
+    {
+      "clientId": "${WIKIJS_OIDC_CLIENT_ID}",
+      "name": "Wiki.js",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${WIKIJS_OIDC_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://${WIKIJS_HOSTNAME}/_api/auth/*"
+      ],
+      "webOrigins": [
+        "https://${WIKIJS_HOSTNAME}"
+      ]
+    },
+    {
+      "clientId": "${FORGEJO_MCP_OAUTH_CLIENT_ID}",
+      "name": "Forgejo MCP - VS Code",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:33418/",
+        "https://vscode.dev/redirect"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "mcp-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "${FORGEJO_MCP_PUBLIC_URL}",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "${WIKIJS_SDLC_MCP_OAUTH_CLIENT_ID}",
+      "name": "Wiki.js SDLC MCP - VS Code",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:33418/",
+        "https://vscode.dev/redirect"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "mcp-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "${WIKIJS_SDLC_MCP_PUBLIC_URL}",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "${KEYCLOAK_SSO_ADMIN_USERNAME}",
+      "email": "${KEYCLOAK_SSO_ADMIN_EMAIL}",
+      "firstName": "${KEYCLOAK_SSO_ADMIN_FIRST_NAME}",
+      "lastName": "${KEYCLOAK_SSO_ADMIN_LAST_NAME}",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_SSO_ADMIN_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "${KEYCLOAK_TEST_USERNAME}",
+      "email": "${KEYCLOAK_TEST_EMAIL}",
+      "firstName": "${KEYCLOAK_TEST_FIRST_NAME}",
+      "lastName": "${KEYCLOAK_TEST_LAST_NAME}",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["offline_access"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_TEST_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

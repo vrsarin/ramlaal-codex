@@ -1,0 +1,304 @@
+services:
+  gateway-config-guard:
+    profiles: [gateway]
+    image: alpine:3.21
+    entrypoint: ["/bin/sh", "/scripts/check-local.sh"]
+    environment:
+      BIND_ADDRESS: ${BIND_ADDRESS:-127.0.0.1}
+      KEYCLOAK_HOSTNAME: ${KEYCLOAK_HOSTNAME:-auth.localhost}
+      GATEWAY_HOSTNAME: ${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+    volumes:
+      - ./deploy/gateway/check-local.sh:/scripts/check-local.sh:ro
+    networks: [gateway-net]
+    restart: "no"
+
+  proxy:
+    depends_on:
+      gateway-config-guard:
+        condition: service_completed_successfully
+    networks:
+      gateway-net:
+        aliases:
+          - ${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+
+  forgejo-mcp:
+    environment:
+      MCP_OIDC_ADDITIONAL_AUDIENCES: ${FORGEJO_MCP_SERVER_CLIENT_ID:-forgejo-mcp-server}
+      MCP_OIDC_DISCOVERY_CLIENT_ID: mcp-gateway-discovery
+    networks:
+      gateway-net: {}
+
+  gateway-keycloak-init:
+    profiles: [gateway]
+    image: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.8.1}
+    entrypoint: ["/bin/bash", "/scripts/configure-keycloak.sh"]
+    env_file:
+      - .env
+      - gateway.env
+    volumes:
+      - ./deploy/gateway/configure-keycloak.sh:/scripts/configure-keycloak.sh:ro
+      - gateway-identity:/gateway-identity
+    depends_on:
+      gateway-identity-init:
+        condition: service_completed_successfully
+      gateway-config-guard:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      keycloak-mcp-init:
+        condition: service_completed_successfully
+    networks: [frontend]
+    restart: "no"
+
+  wikijs-sdlc-mcp:
+    environment:
+      MCP_OIDC_ADDITIONAL_AUDIENCES: ${WIKIJS_SDLC_MCP_SERVER_CLIENT_ID:-wikijs-sdlc-mcp-server}
+      MCP_OIDC_DISCOVERY_CLIENT_ID: mcp-gateway-discovery
+    networks:
+      gateway-net: {}
+
+  gateway-identity-init:
+    profiles: [gateway]
+    image: alpine:3.21
+    entrypoint: ["/bin/sh", "/scripts/init-identity-volume.sh"]
+    volumes:
+      - gateway-identity:/identity
+      - ./deploy/gateway/init-identity-volume.sh:/scripts/init-identity-volume.sh:ro
+    networks: [gateway-net]
+    restart: "no"
+
+  gateway-pki-init:
+    profiles: [gateway]
+    image: alpine/openssl:3.5.4
+    entrypoint: ["/bin/sh", "/scripts/init-pki.sh"]
+    volumes:
+      - ./deploy/gateway/init-pki.sh:/scripts/init-pki.sh:ro
+      - gateway-pki-private:/private
+      - gateway-pki-public:/public
+    networks: [gateway-net]
+    restart: "no"
+
+  gateway-ca-bundle:
+    profiles: [gateway]
+    image: public.ecr.aws/p3v1o3c6/auth-server:1.35.0
+    user: "0:0"
+    entrypoint: ["/app/.venv/bin/python", "-c"]
+    command:
+      - >-
+        import certifi, pathlib;
+        p = pathlib.Path('/public/combined-v2.pem');
+        p.write_bytes(pathlib.Path(certifi.where()).read_bytes() + b'\n' + pathlib.Path('/public/ca-v2.crt').read_bytes());
+        p.chmod(0o644)
+    volumes:
+      - gateway-pki-public:/public
+    depends_on:
+      gateway-pki-init:
+        condition: service_completed_successfully
+    networks: [gateway-net]
+    restart: "no"
+
+  gateway-idp-tls:
+    profiles: [gateway]
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    volumes:
+      - ./deploy/gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+      - gateway-pki-private:/private:ro
+    depends_on:
+      gateway-pki-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    networks: [gateway-net, frontend]
+    restart: unless-stopped
+
+  gateway-mongo-key-init:
+    profiles: [gateway]
+    image: alpine:3.21
+    entrypoint: ["/bin/sh", "/scripts/init-mongo-key.sh"]
+    volumes:
+      - ./deploy/gateway/init-mongo-key.sh:/scripts/init-mongo-key.sh:ro
+      - gateway-mongo-key:/keyfile
+    networks: [gateway-data]
+    restart: "no"
+
+  gateway-mongodb:
+    profiles: [gateway]
+    image: mongo:8.2
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--keyFile", "/keyfile/key"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: gateway-admin
+      MONGO_INITDB_ROOT_PASSWORD: ${GATEWAY_MONGO_PASSWORD:?Run make setup-gateway first}
+    volumes:
+      - gateway-mongo-data:/data/db
+      - gateway-mongo-key:/keyfile:ro
+    depends_on:
+      gateway-mongo-key-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'if (!db.getSiblingDB(\"admin\").auth(\"gateway-admin\", process.env.MONGO_INITDB_ROOT_PASSWORD) || db.adminCommand({ping:1}).ok !== 1) quit(1)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      gateway-data:
+        aliases: [mongodb]
+    restart: unless-stopped
+
+  gateway-mongodb-init:
+    profiles: [gateway]
+    image: public.ecr.aws/p3v1o3c6/registry:1.35.0
+    entrypoint: ["/app/.venv/bin/python", "/app/scripts/init-mongodb-ce.py"]
+    environment:
+      DOCUMENTDB_HOST: mongodb
+      DOCUMENTDB_PORT: "27017"
+      DOCUMENTDB_DATABASE: mcp_registry
+      DOCUMENTDB_USERNAME: gateway-admin
+      DOCUMENTDB_PASSWORD: ${GATEWAY_MONGO_PASSWORD:?Run make setup-gateway first}
+      DOCUMENTDB_NAMESPACE: default
+      MCP_TELEMETRY_DISABLED: "1"
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on:
+      gateway-mongodb:
+        condition: service_healthy
+    networks: [gateway-data]
+    restart: "no"
+
+  gateway-auth:
+    profiles: [gateway]
+    image: public.ecr.aws/p3v1o3c6/auth-server:1.35.0
+    environment:
+      SECRET_KEY: ${GATEWAY_SECRET_KEY:?Run make setup-gateway first}
+      AUTH_SERVER_NGINX_MARKER_SECRET: ${GATEWAY_MARKER_SECRET:?Run make setup-gateway first}
+      REGISTRY_URL: http://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      AUTH_SERVER_EXTERNAL_URL: http://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      EGRESS_AUTH_ENABLED: "true"
+      EGRESS_REGISTRY_INTERNAL_URL: http://gateway-registry:8091
+      EGRESS_OAUTH_TRUSTED_IDP_HOSTS: gateway-idp-tls
+      EGRESS_OBO_ALLOWED_AUDIENCES: ${FORGEJO_MCP_SERVER_CLIENT_ID:-forgejo-mcp-server} ${WIKIJS_SDLC_MCP_SERVER_CLIENT_ID:-wikijs-sdlc-mcp-server} ${HOMEASSISTANT_MCP_SERVER_CLIENT_ID:-homeassistant-mcp-server}
+      SSRF_ALLOWED_HOSTS: forgejo-mcp,wikijs-sdlc-mcp,homeassistant-mcp
+      AUTH_PROVIDER: keycloak
+      KEYCLOAK_ENABLED: "true"
+      KEYCLOAK_URL: https://gateway-idp-tls
+      KEYCLOAK_EXTERNAL_URL: http://${KEYCLOAK_HOSTNAME:-auth.localhost}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-sdlc}
+      KEYCLOAK_CLIENT_ID: http://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}/virtual/sdlc/mcp
+      KEYCLOAK_CLIENT_SECRET: ${GATEWAY_WEB_CLIENT_SECRET:?Run make setup-gateway first}
+      KEYCLOAK_M2M_CLIENT_ID: mcp-gateway-m2m
+      KEYCLOAK_M2M_CLIENT_SECRET: ${GATEWAY_M2M_CLIENT_SECRET:?Run make setup-gateway first}
+      STORAGE_BACKEND: mongodb-ce
+      DOCUMENTDB_HOST: mongodb
+      DOCUMENTDB_PORT: "27017"
+      DOCUMENTDB_DATABASE: mcp_registry
+      DOCUMENTDB_USERNAME: gateway-admin
+      DOCUMENTDB_PASSWORD: ${GATEWAY_MONGO_PASSWORD:?Run make setup-gateway first}
+      DOCUMENTDB_NAMESPACE: default
+      DOCUMENTDB_USE_TLS: "false"
+      REGISTRY_STATIC_TOKEN_AUTH_ENABLED: "true"
+      REGISTRY_API_TOKEN: ${GATEWAY_BOOTSTRAP_TOKEN:?Run make setup-gateway first}
+      SSL_CERT_FILE: /gateway-ca/combined-v2.pem
+      REQUESTS_CA_BUNDLE: /gateway-ca/combined-v2.pem
+      KEYCLOAK_CA_BUNDLE: /gateway-ca/combined-v2.pem
+      AWS_EC2_METADATA_DISABLED: "true"
+      MCP_TELEMETRY_DISABLED: "1"
+      MCP_HTTPS_REQUIRED: "false"
+    volumes:
+      - gateway-pki-public:/gateway-ca:ro
+    depends_on:
+      gateway-config-guard:
+        condition: service_completed_successfully
+      gateway-keycloak-init:
+        condition: service_completed_successfully
+      gateway-ca-bundle:
+        condition: service_completed_successfully
+      gateway-idp-tls:
+        condition: service_started
+      gateway-mongodb-init:
+        condition: service_completed_successfully
+    networks:
+      gateway-net:
+        aliases: [auth-server]
+      gateway-data: {}
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8888/health', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  gateway-registry:
+    profiles: [gateway]
+    image: public.ecr.aws/p3v1o3c6/registry:1.35.0
+    environment:
+      DEPLOYMENT_MODE: with-gateway
+      HEALTH_CHECK_INTERVAL_SECONDS: "15"
+      NGINX_DNS_RESOLVER: 127.0.0.11
+      SECURITY_SCAN_ENABLED: "true"
+      SECURITY_SCAN_ON_REGISTRATION: "true"
+      SECURITY_BLOCK_UNSAFE_SERVERS: "true"
+      SECURITY_BLOCK_ON_SCAN_FAILURE: "true"
+      SECURITY_ALLOW_UNSAFE_SERVERS: "false"
+      SECURITY_ADD_PENDING_TAG: "true"
+      SECURITY_ANALYZERS: yara
+      REGISTRY_MODE: full
+      REGISTRY_URL: http://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      AUTH_SERVER_URL: http://gateway-auth:8888
+      AUTH_SERVER_EXTERNAL_URL: http://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      SECRET_KEY: ${GATEWAY_SECRET_KEY:?Run make setup-gateway first}
+      AUTH_SERVER_NGINX_MARKER_SECRET: ${GATEWAY_MARKER_SECRET:?Run make setup-gateway first}
+      EGRESS_AUTH_ENABLED: "true"
+      EGRESS_OBO_ALLOWED_AUDIENCES: ${FORGEJO_MCP_SERVER_CLIENT_ID:-forgejo-mcp-server} ${WIKIJS_SDLC_MCP_SERVER_CLIENT_ID:-wikijs-sdlc-mcp-server} ${HOMEASSISTANT_MCP_SERVER_CLIENT_ID:-homeassistant-mcp-server}
+      EGRESS_OAUTH_TRUSTED_IDP_HOSTS: gateway-idp-tls
+      SSRF_ALLOWED_HOSTS: forgejo-mcp,wikijs-sdlc-mcp,homeassistant-mcp
+      AUTH_PROVIDER: keycloak
+      KEYCLOAK_ENABLED: "true"
+      KEYCLOAK_URL: https://gateway-idp-tls
+      KEYCLOAK_EXTERNAL_URL: http://${KEYCLOAK_HOSTNAME:-auth.localhost}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-sdlc}
+      KEYCLOAK_CLIENT_ID: http://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}/virtual/sdlc/mcp
+      KEYCLOAK_CLIENT_SECRET: ${GATEWAY_WEB_CLIENT_SECRET:?Run make setup-gateway first}
+      KEYCLOAK_M2M_CLIENT_ID: mcp-gateway-m2m
+      KEYCLOAK_M2M_CLIENT_SECRET: ${GATEWAY_M2M_CLIENT_SECRET:?Run make setup-gateway first}
+      STORAGE_BACKEND: mongodb-ce
+      DOCUMENTDB_HOST: mongodb
+      DOCUMENTDB_PORT: "27017"
+      DOCUMENTDB_DATABASE: mcp_registry
+      DOCUMENTDB_USERNAME: gateway-admin
+      DOCUMENTDB_PASSWORD: ${GATEWAY_MONGO_PASSWORD:?Run make setup-gateway first}
+      DOCUMENTDB_NAMESPACE: default
+      DOCUMENTDB_USE_TLS: "false"
+      EMBEDDINGS_PROVIDER: sentence-transformers
+      HF_HUB_OFFLINE: "1"
+      MCP_TELEMETRY_DISABLED: "1"
+      MCP_HTTPS_REQUIRED: "false"
+      AWS_EC2_METADATA_DISABLED: "true"
+      SSL_CERT_FILE: /gateway-ca/combined-v2.pem
+      REQUESTS_CA_BUNDLE: /gateway-ca/combined-v2.pem
+      KEYCLOAK_CA_BUNDLE: /gateway-ca/combined-v2.pem
+    volumes:
+      - gateway-pki-public:/gateway-ca:ro
+      - ./deploy/gateway/reconcile-security.py:/gateway-scripts/reconcile-security.py:ro
+      - ./deploy/gateway/upstream-tls.conf:/etc/nginx/conf.d/00-sdlc-upstream-tls.conf:ro
+    depends_on:
+      gateway-auth:
+        condition: service_healthy
+      gateway-mongodb-init:
+        condition: service_completed_successfully
+    networks:
+      gateway-net:
+        aliases: [registry]
+      gateway-data: {}
+    restart: unless-stopped
+
+volumes:
+  gateway-identity:
+  gateway-pki-private:
+  gateway-pki-public:
+  gateway-mongo-key:
+  gateway-mongo-data:
+
+networks:
+  gateway-net:
+    internal: true
+  gateway-data:
+    internal: true

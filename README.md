@@ -23,9 +23,11 @@ docker compose -f docker-compose.yaml -f compose.sdlc-mcp.yaml --profile sdlc-mc
 docker compose -f docker-compose.yaml -f compose.sdlc-mcp.yaml --profile sdlc-mcp up -d
 ```
 
-Copy `.env.example` to `.env`, set distinct `FORGEJO_MCP_CLIENT_TOKENS` and `WIKIJS_SDLC_MCP_CLIENT_TOKENS` JSON maps, and configure provider URLs before enabling the profile. The local endpoints default to `http://localhost:3010/mcp` and `http://localhost:3011/mcp`; containers on the Compose network use `http://forgejo-mcp:3000/mcp` and `http://wikijs-sdlc-mcp:3000/mcp`.
+Copy `.env.example` to `.env`, set distinct MCP client tokens and narrowly scoped provider tokens, and configure provider URLs before enabling the profile. The local endpoints default to `http://localhost:3010/mcp` and `http://localhost:3011/mcp`; containers on the Compose network use `http://forgejo-mcp:3000/mcp` and `http://wikijs-sdlc-mcp:3000/mcp`.
 
-Use `main` only for development. Pin a semantic-version tag or immutable digest for shared deployments. The current Ramlaal orchestrator does not yet contain the MCP client adapter that supplies MCP bearer credentials and per-provider user or bot credentials; the overlay packages the deployment boundary for that integration without pretending the client path is complete.
+The overlay appends the configuration in `packages/sdlc-mcp` to Ramlaal's generated Codex homes. It supplies MCP bearer credentials and bot-scoped provider credentials through the gateway environment, so the Codex worker can call both servers without writing secrets to TOML. See the package README for the verification sequence and credential boundary.
+
+Use `main` only for development. Pin a semantic-version tag or immutable digest for shared deployments, and leave `SDLC_ENABLE_WRITES=false` until the read-only path has been verified.
 
 ## Self-healing, self-learning swarm (scaffold)
 

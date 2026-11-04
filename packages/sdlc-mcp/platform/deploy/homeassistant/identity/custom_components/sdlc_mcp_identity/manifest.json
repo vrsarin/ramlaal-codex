@@ -1,0 +1,8 @@
+{
+  "domain": "sdlc_mcp_identity",
+  "name": "SDLC MCP caller identity",
+  "version": "0.1.0",
+  "documentation": "https://github.com/vrsarin/forgejo-wikijs-sdlc-mcp",
+  "requirements": [],
+  "codeowners": []
+}

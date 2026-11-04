@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "sdlcGateway": {
+      "type": "http",
+      "url": "https://mcp-gateway.localhost/virtual/sdlc/mcp",
+      "oauth": {
+        "clientId": "mcp-gateway-vscode"
+      }
+    }
+  }
+}

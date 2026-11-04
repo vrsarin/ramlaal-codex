@@ -1,0 +1,97 @@
+services:
+  sdlc-runtime-keeper:
+    profiles: [runtime]
+    image: node:22-alpine
+    network_mode: none
+    env_file:
+      - path: .sdlc-runtime
+        required: false
+    command: ["node", "-e", "setInterval(() => {}, 2147483647)"]
+    restart: "no"
+
+  forgejo-init:
+    environment:
+      FORGEJO_ADMIN_PASSWORD: ${FORGEJO_ADMIN_PASSWORD:?Run the setup wizard}
+      FORGEJO_OIDC_CLIENT_SECRET: ${FORGEJO_OIDC_CLIENT_SECRET:?Run the setup wizard}
+
+  wikijs:
+    environment:
+      NODE_EXTRA_CA_CERTS: /step-ca-root/root_ca.crt
+      WIKIJS_ADMIN_PASSWORD: ${WIKIJS_ADMIN_PASSWORD:?Run the setup wizard}
+      WIKIJS_DB_PASSWORD: ${WIKIJS_DB_PASSWORD:?Run the setup wizard}
+
+  wikijs-init:
+    environment:
+      NODE_EXTRA_CA_CERTS: /step-ca-root/root_ca.crt
+      WIKIJS_ADMIN_PASSWORD: ${WIKIJS_ADMIN_PASSWORD:?Run the setup wizard}
+      WIKIJS_DB_PASSWORD: ${WIKIJS_DB_PASSWORD:?Run the setup wizard}
+      WIKIJS_OIDC_CLIENT_SECRET: ${WIKIJS_OIDC_CLIENT_SECRET:?Run the setup wizard}
+
+  keycloak:
+    environment:
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Run the setup wizard}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Run the setup wizard}
+      KEYCLOAK_SSO_ADMIN_PASSWORD: ${KEYCLOAK_SSO_ADMIN_PASSWORD:?Run the setup wizard}
+      KEYCLOAK_TEST_PASSWORD: ${KEYCLOAK_TEST_PASSWORD:?Run the setup wizard}
+      FORGEJO_OIDC_CLIENT_SECRET: ${FORGEJO_OIDC_CLIENT_SECRET:?Run the setup wizard}
+      WIKIJS_OIDC_CLIENT_SECRET: ${WIKIJS_OIDC_CLIENT_SECRET:?Run the setup wizard}
+      MCP_OIDC_CLIENT_SECRET: ${MCP_OIDC_CLIENT_SECRET:?Run the setup wizard}
+
+  keycloak-mcp-init:
+    environment:
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Run the setup wizard}
+      KEYCLOAK_TEST_PASSWORD: ${KEYCLOAK_TEST_PASSWORD:?Run the setup wizard}
+
+  gateway-keycloak-init:
+    env_file: !override
+      - .env
+    environment:
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Run the setup wizard}
+      GATEWAY_WEB_CLIENT_SECRET: ${GATEWAY_WEB_CLIENT_SECRET:?Run the setup wizard}
+      GATEWAY_M2M_CLIENT_SECRET: ${GATEWAY_M2M_CLIENT_SECRET:?Run the setup wizard}
+      GATEWAY_DISCOVERY_CLIENT_SECRET: ${GATEWAY_DISCOVERY_CLIENT_SECRET:?Run the setup wizard}
+      GATEWAY_HOME_DISCOVERY_PASSWORD: ${GATEWAY_HOME_DISCOVERY_PASSWORD:?Run the setup wizard}
+
+  gateway-ca-bundle:
+    command: !override
+      - >-
+        import certifi, pathlib;
+        p = pathlib.Path('/public/combined-v2.pem');
+        p.write_bytes(pathlib.Path(certifi.where()).read_bytes() + b'\n' + pathlib.Path('/public/ca-v2.crt').read_bytes() + b'\n' + pathlib.Path('/step-ca-root/root_ca.crt').read_bytes());
+        p.chmod(0o644)
+    volumes:
+      - step-ca-public:/step-ca-root:ro
+    depends_on:
+      step-ca-init:
+        condition: service_completed_successfully
+
+  step-ca-secrets-init:
+    entrypoint: ["/bin/sh", "/scripts/init-public-only.sh"]
+    volumes:
+      - ./deploy/step-ca/init-public-only.sh:/scripts/init-public-only.sh:ro
+
+  step-ca-init:
+    entrypoint: ["/bin/sh", "/scripts/runtime-init.sh"]
+    environment:
+      STEP_CA_PASSWORD: ${STEP_CA_PASSWORD:?Run the setup wizard}
+      STEP_CA_PROVISIONER_PASSWORD: ${STEP_CA_PROVISIONER_PASSWORD:?Run the setup wizard}
+    volumes: !override
+      - step-ca-data:/home/step
+      - step-ca-public:/public
+      - ./deploy/step-ca/init-ca.sh:/scripts/init-ca.sh:ro
+      - ./deploy/step-ca/runtime-init.sh:/scripts/runtime-init.sh:ro
+    tmpfs:
+      - /step-secrets:uid=1000,gid=1000,mode=0700
+
+  step-ca:
+    entrypoint: ["/bin/sh", "/scripts/runtime-start.sh"]
+    command: []
+    environment:
+      STEP_CA_PASSWORD: ${STEP_CA_PASSWORD:?Run the setup wizard}
+      STEP_CA_PROVISIONER_PASSWORD: ${STEP_CA_PROVISIONER_PASSWORD:?Run the setup wizard}
+    volumes: !override
+      - step-ca-data:/home/step
+      - ./deploy/step-ca/runtime-start.sh:/scripts/runtime-start.sh:ro
+      - ./deploy/step-ca/test-ca.sh:/scripts/test-ca.sh:ro
+    tmpfs:
+      - /step-secrets:uid=1000,gid=1000,mode=0700

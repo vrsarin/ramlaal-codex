@@ -1,0 +1,31 @@
+{
+	admin off
+	auto_https disable_redirects
+	acme_ca https://step-ca:9000/acme/sdlc-home-assistant/directory
+	acme_ca_root /step-ca-root/root_ca.crt
+}
+
+home-assistant-upstream-tls:443 {
+	tls {
+		issuer acme https://step-ca:9000/acme/sdlc-home-assistant/directory {
+			trusted_roots /step-ca-root/root_ca.crt
+			disable_http_challenge
+		}
+	}
+	reverse_proxy 127.0.0.1:8123 {
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+	}
+}
+
+:80 {
+	bind 127.0.0.1 ::1
+	@keycloak host {$KEYCLOAK_HOSTNAME:auth.localhost}
+	handle @keycloak {
+		reverse_proxy proxy:80
+	}
+	handle {
+		respond "not found" 404
+	}
+}

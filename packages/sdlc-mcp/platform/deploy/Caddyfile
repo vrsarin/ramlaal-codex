@@ -1,0 +1,89 @@
+{
+	auto_https off
+	admin off
+}
+
+http://{$FORGEJO_HOSTNAME:forgejo.localhost} {
+	@forgejo_mcp_login {
+		path /user/login
+		header_regexp Cookie "(?i)(^|;[[:space:]]*)redirect_to=%2Flogin%2Foauth%2Fauthorize%3F[^;]*%252Foauth%252Fforgejo%252Fcallback"
+	}
+	redir @forgejo_mcp_login /user/oauth2/Keycloak 303
+	reverse_proxy forgejo:3000
+}
+
+http://{$WIKIJS_HOSTNAME:wiki.localhost} {
+	# Intercept the consent document: Wiki.js changes to /login client-side, without a proxy request.
+	@wikijs_mcp_consent {
+		path /_authorize
+		query redirect_uri={$WIKIJS_OAUTH_REDIRECT_URL:http://localhost/oauth/wikijs/callback}
+		not query mcp_sso=1
+	}
+	handle @wikijs_mcp_consent {
+		reverse_proxy wikijs-sdlc-mcp:3000
+	}
+	handle {
+		reverse_proxy wikijs:3000
+	}
+}
+
+http://{$KEYCLOAK_HOSTNAME:auth.localhost} {
+	@forgejo_mcp_auth {
+		path /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth
+		query resource={$FORGEJO_MCP_PUBLIC_URL:http://forgejo-mcp.localhost/mcp}
+	}
+	handle @forgejo_mcp_auth {
+		reverse_proxy forgejo-mcp:3000
+	}
+	@wikijs_mcp_auth {
+		path /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth
+		query resource={$WIKIJS_SDLC_MCP_PUBLIC_URL:http://sdlc-mcp.localhost/mcp}
+	}
+	handle @wikijs_mcp_auth {
+		reverse_proxy wikijs-sdlc-mcp:3000
+	}
+	handle /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth-upstream {
+		rewrite * /realms/{$KEYCLOAK_REALM:sdlc}/protocol/openid-connect/auth
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		reverse_proxy keycloak:8080
+	}
+}
+
+http://{$FORGEJO_MCP_HOSTNAME:forgejo-mcp.localhost} {
+	reverse_proxy forgejo-mcp:3000
+}
+
+http://{$WIKIJS_SDLC_MCP_HOSTNAME:sdlc-mcp.localhost} {
+	reverse_proxy wikijs-sdlc-mcp:3000
+}
+
+http://{$GATEWAY_HOSTNAME:mcp-gateway.localhost} {
+	reverse_proxy gateway-registry:8080
+}
+
+# Wiki.js only accepts https or loopback-http OAuth redirects, so the SDLC MCP's Wiki.js
+# and Forgejo connections return through http://localhost. Only the OAuth browser routes are exposed here.
+http://localhost {
+	handle /oauth/wikijs/* {
+		reverse_proxy wikijs-sdlc-mcp:3000
+	}
+	handle /oauth/forgejo/* {
+		reverse_proxy forgejo-mcp:3000
+	}
+	handle /oauth/homeassistant/* {
+		reverse_proxy homeassistant-mcp:3000
+	}
+	handle /internal/homeassistant/discovery/connect {
+		rewrite * /internal/discovery/connect
+		reverse_proxy homeassistant-mcp:3000
+	}
+	handle /internal/homeassistant/mcp {
+		rewrite * /mcp
+		reverse_proxy homeassistant-mcp:3000
+	}
+	handle {
+		respond "not found" 404
+	}
+}

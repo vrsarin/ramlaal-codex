@@ -1,0 +1,56 @@
+services:
+  proxy:
+    environment:
+      SDLC_GATEWAY_SCHEME: https
+      SDLC_GATEWAY_TLS_DIRECTIVE: |
+        tls {
+          issuer acme https://step-ca:9000/acme/sdlc-services/directory {
+            trusted_roots /step-ca-root/root_ca.crt
+            disable_http_challenge
+          }
+        }
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:443:443"
+    volumes:
+      - gateway-public-cert-data:/data
+    depends_on:
+      step-ca:
+        condition: service_healthy
+    networks:
+      step-ca-net:
+        aliases:
+          - ${FORGEJO_HOSTNAME:-git.localhost}
+          - ${WIKIJS_HOSTNAME:-wiki.localhost}
+          - ${KEYCLOAK_HOSTNAME:-login.localhost}
+          - ${HOMEASSISTANT_HOSTNAME:-home.localhost}
+          - ${FORGEJO_MCP_HOSTNAME:-forgejo-mcp.localhost}
+          - ${WIKIJS_SDLC_MCP_HOSTNAME:-sdlc-mcp.localhost}
+          - ${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+
+  home-assistant:
+    volumes:
+      - ./deploy/homeassistant/Caddyfile.keycloak-loopback-https:/scripts/Caddyfile:ro
+      - gateway-public-cert-data:/gateway-caddy-data
+
+  gateway-keycloak-init:
+    environment:
+      SDLC_GATEWAY_SCHEME: https
+
+  gateway-auth:
+    environment:
+      REGISTRY_URL: https://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      AUTH_SERVER_EXTERNAL_URL: https://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      KEYCLOAK_CLIENT_ID: https://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}/virtual/sdlc/mcp
+      KEYCLOAK_EXTERNAL_URL: https://${KEYCLOAK_HOSTNAME:-login.localhost}
+      MCP_HTTPS_REQUIRED: "true"
+
+  gateway-registry:
+    environment:
+      REGISTRY_URL: https://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      AUTH_SERVER_EXTERNAL_URL: https://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}
+      KEYCLOAK_CLIENT_ID: https://${GATEWAY_HOSTNAME:-mcp-gateway.localhost}/virtual/sdlc/mcp
+      KEYCLOAK_EXTERNAL_URL: https://${KEYCLOAK_HOSTNAME:-login.localhost}
+      MCP_HTTPS_REQUIRED: "true"
+
+volumes:
+  gateway-public-cert-data:

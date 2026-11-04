@@ -1,0 +1,9 @@
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - "deploy/homeassistant/Dockerfile"
+    statement: >-
+      The pinned upstream Home Assistant container uses s6-overlay and is designed to start as root.
+      It is loopback-bound integration infrastructure and is not one of the published MCP images.
+      Reassess non-root upstream support before this exception expires.
+    expired_at: 2027-02-01

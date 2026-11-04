@@ -1,4 +1,26 @@
 services:
+  codex-config:
+    volumes:
+      - ./packages/sdlc-mcp:/sdlc-mcp:ro
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data/codex-home /data/codex-home-docker
+        cp /src/config.toml /data/codex-home/config.toml
+        sed 's#localhost:4000#litellm:4000#' /src/config.toml > /data/codex-home-docker/config.toml
+        printf '\n' >> /data/codex-home/config.toml
+        cat /sdlc-mcp/codex.config.toml >> /data/codex-home/config.toml
+        printf '\n' >> /data/codex-home-docker/config.toml
+        cat /sdlc-mcp/codex.config.docker.toml >> /data/codex-home-docker/config.toml
+
+  gateway:
+    environment:
+      FORGEJO_MCP_BEARER_TOKEN: ${FORGEJO_MCP_BEARER_TOKEN:-}
+      WIKIJS_SDLC_MCP_BEARER_TOKEN: ${WIKIJS_SDLC_MCP_BEARER_TOKEN:-}
+      FORGEJO_ACCESS_TOKEN: ${FORGEJO_ACCESS_TOKEN:?Set FORGEJO_ACCESS_TOKEN to a bot-scoped Forgejo token}
+      WIKIJS_ACCESS_TOKEN: ${WIKIJS_ACCESS_TOKEN:?Set WIKIJS_ACCESS_TOKEN to a bot-scoped Wiki.js token}
+
   forgejo-mcp:
     image: ${FORGEJO_MCP_IMAGE:-ghcr.io/vrsarin/forgejo-mcp-server:main}
     profiles: [sdlc-mcp]
@@ -9,6 +31,7 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    pids_limit: 100
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     environment:
@@ -16,8 +39,14 @@ services:
       MCP_HOST: 0.0.0.0
       MCP_PORT: 3000
       MCP_ALLOWED_HOSTS: forgejo-mcp,localhost,127.0.0.1
-      MCP_AUTH_MODE: static
-      MCP_CLIENT_TOKENS: ${FORGEJO_MCP_CLIENT_TOKENS:?Set FORGEJO_MCP_CLIENT_TOKENS to a JSON client-token map}
+      ENABLE_OIDC: ${ENABLE_OIDC:-false}
+      ENABLE_TLS: ${ENABLE_TLS:-false}
+      TLS_MODE: ${TLS_MODE:-}
+      TLS_DOMAIN: ${FORGEJO_MCP_TLS_DOMAIN:-}
+      TLS_EMAIL: ${TLS_EMAIL:-}
+      TLS_CERT_PATH: ${FORGEJO_MCP_TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${FORGEJO_MCP_TLS_KEY_PATH:-}
+      MCP_CLIENT_TOKENS: ${FORGEJO_MCP_CLIENT_TOKENS:-}
       FORGEJO_URL: ${FORGEJO_URL:?Set FORGEJO_URL to the Forgejo origin reachable from this container}
       FORGEJO_ALLOW_INSECURE_HTTP: ${FORGEJO_ALLOW_INSECURE_HTTP:-false}
       SDLC_ALLOWED_REPOSITORIES: ${SDLC_ALLOWED_REPOSITORIES:?Set SDLC_ALLOWED_REPOSITORIES to owner/repository entries}
@@ -27,7 +56,7 @@ services:
     volumes:
       - ./.data/forgejo-mcp:/data
     healthcheck:
-      test: [CMD-SHELL, "wget --quiet --spider http://127.0.0.1:3000/healthz || exit 1"]
+      test: [CMD, node, -e, "require(process.env.ENABLE_TLS==='true'?'https':'http').get((process.env.ENABLE_TLS==='true'?'https':'http')+'://127.0.0.1:3000/healthz',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -43,6 +72,7 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    pids_limit: 100
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     environment:
@@ -50,8 +80,14 @@ services:
       MCP_HOST: 0.0.0.0
       MCP_PORT: 3000
       MCP_ALLOWED_HOSTS: wikijs-sdlc-mcp,localhost,127.0.0.1
-      MCP_AUTH_MODE: static
-      MCP_CLIENT_TOKENS: ${WIKIJS_SDLC_MCP_CLIENT_TOKENS:?Set WIKIJS_SDLC_MCP_CLIENT_TOKENS to a JSON client-token map}
+      ENABLE_OIDC: ${ENABLE_OIDC:-false}
+      ENABLE_TLS: ${ENABLE_TLS:-false}
+      TLS_MODE: ${TLS_MODE:-}
+      TLS_DOMAIN: ${WIKIJS_SDLC_MCP_TLS_DOMAIN:-}
+      TLS_EMAIL: ${TLS_EMAIL:-}
+      TLS_CERT_PATH: ${WIKIJS_SDLC_MCP_TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${WIKIJS_SDLC_MCP_TLS_KEY_PATH:-}
+      MCP_CLIENT_TOKENS: ${WIKIJS_SDLC_MCP_CLIENT_TOKENS:-}
       WIKIJS_MCP_URL: ${WIKIJS_MCP_URL:?Set WIKIJS_MCP_URL to the Wiki.js /_mcp endpoint reachable from this container}
       WIKIJS_ALLOW_INSECURE_MCP_HTTP: ${WIKIJS_ALLOW_INSECURE_MCP_HTTP:-false}
     ports:
@@ -59,7 +95,7 @@ services:
     volumes:
       - ./.data/wikijs-sdlc-mcp:/data
     healthcheck:
-      test: [CMD-SHELL, "wget --quiet --spider http://127.0.0.1:3000/healthz || exit 1"]
+      test: [CMD, node, -e, "require(process.env.ENABLE_TLS==='true'?'https':'http').get((process.env.ENABLE_TLS==='true'?'https':'http')+'://127.0.0.1:3000/healthz',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 12
